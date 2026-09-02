@@ -1605,8 +1605,14 @@ const Audio_ = {
     const AC = window.AudioContext||window.webkitAudioContext;
     this.ctx = new AC();
     this.master = this.ctx.createGain();
-    this.master.gain.value = .8;
-    this.master.connect(this.ctx.destination);
+    this.master.gain.value = 1.15;
+    // a limiter on the output bus, so boosting note volume can't distort
+    // a chord (several notes stacking up) into a clipped, crackly sound
+    const limiter = this.ctx.createDynamicsCompressor();
+    limiter.threshold.value = -6; limiter.knee.value = 12;
+    limiter.ratio.value = 8; limiter.attack.value = .003; limiter.release.value = .25;
+    this.master.connect(limiter);
+    limiter.connect(this.ctx.destination);
     return this.ctx;
   },
   resume(){ if(this.ctx && this.ctx.state==='suspended') this.ctx.resume(); },
@@ -1658,8 +1664,8 @@ const Audio_ = {
     const decay = Math.max(.55, 3.4 - (midi-36)*0.045);
     const hold = Math.min(dur!=null?dur:1.2, decay);
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vel*.42, t+.006);
-    g.gain.exponentialRampToValueAtTime(vel*.16, t+.18);
+    g.gain.linearRampToValueAtTime(vel*.65, t+.006);
+    g.gain.exponentialRampToValueAtTime(vel*.25, t+.18);
     g.gain.exponentialRampToValueAtTime(.0001, t+hold+.35);
     const parts=[[1,1],[2,.36],[3,.17],[4,.09],[5,.045],[6,.02]];
     for(const [h,amp] of parts){
