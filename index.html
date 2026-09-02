@@ -413,6 +413,13 @@ button{cursor:pointer;background:none;border:none;padding:0}
 .escape-x:hover{opacity:1}
 @media (max-width:640px){ .escape{align-items:flex-start;flex-direction:row} }
 
+/* ---------- finish / up-next ---------- */
+.finish-stars{font-family:var(--font-display);font-size:var(--step-3);color:var(--brass);letter-spacing:.06em;margin-bottom:2px}
+.finish-stats{color:var(--ink-2);margin-bottom:4px}
+.finish-note{color:var(--ink-2);line-height:1.55;margin-bottom:18px}
+.opt.next{border-color:var(--brass);background:var(--brass-wash)}
+.opt.next .oi{background:var(--brass);color:var(--paper);border-color:var(--brass)}
+
 /* toast */
 .toast{
   position:fixed;left:50%;bottom:calc(var(--kb-h) + 96px);transform:translateX(-50%);
@@ -576,6 +583,27 @@ button{cursor:pointer;background:none;border:none;padding:0}
     <div class="row">
       <button class="ctl primary" id="setupDone">Done</button>
       <button class="ctl" id="setupSkip">Use the on-screen keys</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="finishScrim" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="finishTitle">
+    <div class="finish-stars" id="finishStars"></div>
+    <h3 id="finishTitle">Nice work</h3>
+    <p class="finish-stats" id="finishStats"></p>
+    <p class="finish-note" id="finishNote"></p>
+    <button class="opt next" id="finishNext" hidden>
+      <span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></span>
+      <span>
+        <span class="ot" id="finishNextTitle">Next tune</span>
+        <span class="od" id="finishNextByline"></span>
+      </span>
+    </button>
+    <p class="small" id="finishAllDone" hidden>That's every tune in this list — pick another from the songbook whenever you're ready.</p>
+    <div class="row">
+      <button class="ctl" id="finishAgain">Practice this again</button>
+      <button class="ctl" id="finishClose">Choose another</button>
     </div>
   </div>
 </div>
@@ -2160,11 +2188,8 @@ const Session = {
     const pct = total ? (this.hits/total)*100 : 0;
     const p = Store.record(this.L.id, pct);
     UI.paintProgress();
-    UI.msg(`Finished — ${Math.round(pct)}% accurate, longest run ${this.bestStreak}. ${
-      p.stars===3?'That one\'s yours now.' : p.stars===2?'Close. One more pass at this tempo.' :
-      p.stars===1?'Getting there — try it slower.' : 'Slow the tempo down and go again.'}`);
-    UI.toast(`${Math.round(pct)}%  ·  ${'●'.repeat(p.stars)}${'○'.repeat(3-p.stars)}`);
     UI.updateHud();
+    UI.showFinish(pct, p.stars, this.bestStreak);
   }
 };
 
@@ -2233,8 +2258,10 @@ const UI = {
       setTimeout(()=>this.paintSoundState(), 120);
     };
     this.$('setupScrim').addEventListener('click', e=>{ if(e.target===this.$('setupScrim')) this.closeSetup(); });
+    this.$('finishScrim').addEventListener('click', e=>{ if(e.target===this.$('finishScrim')) this.closeFinish(); });
     document.addEventListener('keydown', e=>{
       if(e.key==='Escape' && !this.$('setupScrim').hidden){ this.closeSetup(); }
+      if(e.key==='Escape' && !this.$('finishScrim').hidden){ this.closeFinish(); }
     });
     this.$('setupSkip').onclick = ()=>{ this.setInput('tap'); this.closeSetup(); };
 
@@ -2433,6 +2460,7 @@ const UI = {
     this.stopPlayback();
     const L = compile(raw, kind);
     this.current=L;
+    this.currentKind=kind;
     this.bpm = L.bpm; this.$('tempoRange').value=L.bpm; this.$('tempoOut').textContent=L.bpm;
     Session.load(L);
     document.querySelectorAll('.lesson-item').forEach(b=>{
@@ -2563,6 +2591,47 @@ const UI = {
       : '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Start';
   },
   msg(t){ this.$('hudMsg').textContent=t; },
+
+  /* ---------- finish / up-next ---------- */
+  showFinish(pct, stars, streak){
+    const L = this.current; if(!L) return;
+    const kind = this.currentKind || 'songs';
+    const list = kind==='songs'?SONGS : kind==='chords'?CHORD_LESSONS : kind==='technique'?TECHNIQUE : READING;
+    const i = list.findIndex(x=>x.id===L.id);
+    const next = i>=0 ? list[i+1] : null;
+    const roundPct = Math.round(pct);
+    const passed = stars>=2;
+
+    this.$('finishStars').textContent = '●'.repeat(stars)+'○'.repeat(3-stars);
+    this.$('finishTitle').textContent = stars===3?'That one\'s yours now' : stars===2?'Almost there' :
+      stars===1?'Getting there' : 'Keep at it';
+    this.$('finishStats').textContent = `${roundPct}% accurate  ·  longest run ${streak}`;
+    this.$('finishNote').textContent = stars===3?'Clean run at this tempo. Ready to move on.' :
+      stars===2?'Solid — one more pass here would lock it in, or push on if you\'d rather.' :
+      stars===1?'Getting there. Try it a bit slower before you move on.' :
+      'Slow the tempo down and run it again before moving on.';
+
+    const nextBtn = this.$('finishNext'), again = this.$('finishAgain'), close = this.$('finishClose');
+    if(next){
+      nextBtn.hidden=false;
+      this.$('finishNextTitle').textContent = 'Next: '+next.title;
+      this.$('finishNextByline').textContent = next.composer || '';
+      nextBtn.onclick = ()=>{ this.closeFinish(); this.selectLesson(kind, next.id); };
+      this.$('finishAllDone').hidden=true;
+      again.textContent = 'Practice this again';
+      close.textContent = 'Choose another';
+    } else {
+      nextBtn.hidden=true;
+      this.$('finishAllDone').hidden=false;
+      again.textContent = 'Practice this again';
+      close.textContent = 'Back to songbook';
+    }
+    again.onclick = ()=>{ this.closeFinish(); Session.load(L); };
+    close.onclick = ()=>this.closeFinish();
+    this.$('finishScrim').hidden=false;
+  },
+  closeFinish(){ this.$('finishScrim').hidden=true; },
+
   toast(t){
     const el=this.$('toast'); el.textContent=t; el.classList.add('show');
     clearTimeout(this._tt); this._tt=setTimeout(()=>el.classList.remove('show'), 2600);
@@ -2690,6 +2759,7 @@ const UI = {
       if(e.metaKey||e.ctrlKey||e.altKey||e.repeat) return;
       if(editable(document.activeElement)) return;
       if(!this.$('setupScrim').hidden) return;
+      if(!this.$('finishScrim').hidden) return;
       const key=e.key.toLowerCase();
       // Enter or Space plays whichever key has focus
       if((key==='enter'||key===' ') && document.activeElement && document.activeElement.dataset &&
