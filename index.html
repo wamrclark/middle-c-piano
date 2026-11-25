@@ -2470,52 +2470,77 @@ async function importSongFile(file){
   return songFromNotes(p);
 }
 
-/* MusicXML: picks the first part with two staves (the piano), else the first part.
-   Times are in quarter notes. Tied continuations are marked so they aren't replayed. */
+/* MusicXML. Picks the piano (first part with two staves). If a one-staff
+   melody part (a singer's line) comes before it, the right hand plays that
+   melody in every bar where it has notes, and the piano's own right hand in
+   bars where it rests; the left hand is the piano's bass staff. Every bar is
+   held to the time signature's length, so a bar a scanner misread can't push
+   the rest of the piece out of line. Times are in quarter notes. */
 function parseMusicXML(text){
   const doc=new DOMParser().parseFromString(text,'application/xml');
   if(doc.querySelector('parsererror') || !doc.querySelector('part')) throw new Error('That file is not a score this app can read. Try MusicXML or MIDI.');
   const txt=(el,sel)=>{ const e=el.querySelector(sel); return e?e.textContent.trim():''; };
   const parts=[...doc.querySelectorAll('part')];
-  const part=parts.find(pt=>{ const st=pt.querySelector('attributes > staves'); return st && +st.textContent>=2; }) || parts[0];
+  const staves=pt=>{ const st=pt.querySelector('attributes > staves'); return st ? +st.textContent : 1; };
   const out={title:txt(doc,'work > work-title')||txt(doc,'movement-title'),
              composer:txt(doc,'identification > creator[type="composer"]'),
              fifths:0, beats:4, beatType:4, bpm:0, pickup:0, clef1:'G', notes:[]};
   const PC={C:0,D:2,E:4,F:5,G:7,A:9,B:11};
-  let div=1, pos=0, lastOnset=0, first=true;
-  for(const meas of part.children){
-    if(meas.tagName!=='measure') continue;
-    const start=pos; let far=pos;
-    for(const el of meas.children){
-      const tag=el.tagName;
-      if(tag==='attributes'){
-        const d=txt(el,'divisions'); if(d) div=+d||1;
-        if(first){
-          const f=txt(el,'key > fifths'); if(f!=='') out.fifths=Math.max(-7,Math.min(7,+f||0));
-          const b=txt(el,'time > beats'), bt=txt(el,'time > beat-type'); if(b){ out.beats=parseInt(b)||4; out.beatType=+bt||4; }
-          const c=el.querySelector('clef:not([number]) > sign, clef[number="1"] > sign'); if(c) out.clef1=c.textContent.trim();
+  const readPart=(part, meta)=>{
+    const notes=[];
+    let div=1, pos=0, lastOnset=0, first=true, barLen=4, bar=0;
+    for(const meas of part.children){
+      if(meas.tagName!=='measure') continue;
+      const start=pos; let far=pos;
+      for(const el of meas.children){
+        const tag=el.tagName;
+        if(tag==='attributes'){
+          const d=txt(el,'divisions'); if(d) div=+d||1;
+          const b=txt(el,'time > beats'), bt=txt(el,'time > beat-type');
+          if(b){ barLen=(parseInt(b)||4)*4/(+bt||4); if(first && meta){ out.beats=parseInt(b)||4; out.beatType=+bt||4; } }
+          if(first && meta){
+            const f=txt(el,'key > fifths'); if(f!=='') out.fifths=Math.max(-7,Math.min(7,+f||0));
+            const c=el.querySelector('clef:not([number]) > sign, clef[number="1"] > sign'); if(c) out.clef1=c.textContent.trim();
+          }
+        } else if(tag==='direction' || tag==='sound'){
+          const snd = tag==='sound' ? el : el.querySelector('sound[tempo]');
+          if(meta && snd && snd.getAttribute('tempo') && !out.bpm) out.bpm=+snd.getAttribute('tempo');
+        } else if(tag==='backup'){ pos-= (+txt(el,'duration')||0)/div; }
+        else if(tag==='forward'){ pos+= (+txt(el,'duration')||0)/div; far=Math.max(far,pos); }
+        else if(tag==='note'){
+          if(el.querySelector('grace')) continue;
+          const dur=(+txt(el,'duration')||0)/div;
+          const chord=!!el.querySelector('chord');
+          const onset = chord ? lastOnset : pos;
+          if(!chord){ lastOnset=pos; pos+=dur; far=Math.max(far,pos); }
+          const pt=el.querySelector('pitch'); if(!pt) continue;
+          const m=(parseInt(txt(pt,'octave'))+1)*12 + PC[txt(pt,'step')] + Math.round(+txt(pt,'alter')||0);
+          if(!(m>=21 && m<=108)) continue;
+          if(onset >= start+barLen-1e-6 && !(first && meas.getAttribute('implicit')==='yes')) continue;   // spill from a misread bar
+          const fg=txt(el,'notations technical fingering');
+          notes.push({t:onset, d:dur, m, bar, staff:+txt(el,'staff')||1,
+            tie:!!el.querySelector('tie[type="stop"]'), finger:/^[1-5]$/.test(fg)?+fg:null});
         }
-      } else if(tag==='direction' || tag==='sound'){
-        const snd = tag==='sound' ? el : el.querySelector('sound[tempo]');
-        if(snd && snd.getAttribute('tempo') && !out.bpm) out.bpm=+snd.getAttribute('tempo');
-      } else if(tag==='backup'){ pos-= (+txt(el,'duration')||0)/div; }
-      else if(tag==='forward'){ pos+= (+txt(el,'duration')||0)/div; far=Math.max(far,pos); }
-      else if(tag==='note'){
-        if(el.querySelector('grace')) continue;
-        const dur=(+txt(el,'duration')||0)/div;
-        const chord=!!el.querySelector('chord');
-        const onset = chord ? lastOnset : pos;
-        if(!chord){ lastOnset=pos; pos+=dur; far=Math.max(far,pos); }
-        const pt=el.querySelector('pitch'); if(!pt) continue;
-        const m=(parseInt(txt(pt,'octave'))+1)*12 + PC[txt(pt,'step')] + Math.round(+txt(pt,'alter')||0);
-        if(!(m>=21 && m<=108)) continue;
-        const fg=txt(el,'notations technical fingering');
-        out.notes.push({t:onset, d:dur, m, staff:+txt(el,'staff')||1,
-          tie:!!el.querySelector('tie[type="stop"]'), finger:/^[1-5]$/.test(fg)?+fg:null});
       }
+      const pickup = first && meas.getAttribute('implicit')==='yes';
+      if(pickup && meta) out.pickup=far-start;
+      pos = pickup ? far : start+barLen;
+      first=false; bar++;
     }
-    if(first && meas.getAttribute('implicit')==='yes') out.pickup=far-start;
-    first=false; pos=far;
+    return notes;
+  };
+  const piano=parts.find(pt=>staves(pt)>=2);
+  const melodyPart = piano && parts.slice(0, parts.indexOf(piano)).find(pt=>staves(pt)===1);
+  if(piano && melodyPart){
+    const mel=readPart(melodyPart, true), pn=readPart(piano, false);
+    const sung=new Set(mel.map(n=>n.bar));
+    for(const n of mel) out.notes.push({...n, staff:1});
+    for(const n of pn){
+      if(n.staff>=2) out.notes.push({...n, staff:2});
+      else if(!sung.has(n.bar)) out.notes.push({...n, staff:1});
+    }
+  } else {
+    out.notes = readPart(piano || parts[0], true);
   }
   return out;
 }
