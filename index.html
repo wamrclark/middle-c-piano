@@ -1795,6 +1795,7 @@ const Input = {
   suppressMono:false,   // set while the target is a chord: see chordPresence
   lastStrike:0,         // when a key was last struck (a jump in level, or a target's onset)
   stepAt:0,             // when the current step lit up: only strikes after it count
+  _cpLo:new Map(), _prev:[],   // per-step chord baseline: see newStep
   minExpected:21,       // ignore anything implausibly below the lesson's range
 
   hasMIDI(){ return !!navigator.requestMIDIAccess; },
@@ -1915,7 +1916,17 @@ const Input = {
     // chord target: scan the long-window spectrum every ~60 ms and keep the history
     if(this.suppressMono && now-this._lastScan>60){
       this._lastScan=now;
-      this._cp.push(chordScan(this._mic, this.targetNotes||[], this.tuneRatio()));
+      const s=chordScan(this._mic, this.targetNotes||[], this.tuneRatio()), lo=this._cpLo;
+      // a note counts only once it jumps well above its lowest level since this
+      // step lit up: a chord still held from the bar before is sounding, but
+      // wasn't just played. Notes of the step just played count only by their
+      // own fresh onset (Session.satisfied), since they are still arriving here.
+      for(const m of this.targetNotes||[]){
+        const a=s.fund.get(m)||0;
+        if(!lo.has(m) || a<lo.get(m)) lo.set(m,a);
+        if(!(a > lo.get(m)*2) || this._prev.includes(m)) s.delete(m);
+      }
+      this._cp.push(s);
       if(this._cp.length>10) this._cp.shift();
     }
 
@@ -2009,7 +2020,7 @@ const Input = {
   /* A new step lit up. The notes just played are still "arriving" in the
      slower analyser for a moment; don't let that tail count as a new strike. */
   newStep(prev){
-    this._cp=[]; this.stepAt=performance.now();
+    this._cp=[]; this._cpLo=new Map(); this._prev=prev; this.stepAt=performance.now();
     for(const m of prev){ if(this._tHist) this._tHist.delete(m); if(this._tLast) this._tLast.set(m, this.stepAt); }
   },
 
@@ -2070,6 +2081,7 @@ function chordScoreMags(mags, binHz, cands, tr){
     if(isOvertone(m, a, fund, medF)) continue;
     out.add(m);
   }
+  out.fund=fund;   // levels, so the caller can tell a fresh note from a held one
   return out;
 }
 /* Which expected notes were just struck? A strike = that note's energy jumps
@@ -2394,7 +2406,7 @@ const Session = {
     // target note when the lesson is asking for that same letter
     if(Input.mode==='mic'){
       const ev0=this.L.events[this.idx];
-      const t = ev0 && ev0.notes.find(n=>(m-n)%12===0);
+      const t = ev0 && (ev0.notes.includes(m) ? m : ev0.notes.find(n=>(m-n)%12===0));
       if(t!==undefined) m=t;
     }
     if(this.mode==='play'){
@@ -2435,10 +2447,11 @@ const Session = {
     if(!this.running || this.mode!=='learn' || Input.mode!=='mic') return;
     const ev=this.L.events[this.idx];
     if(!ev || ev.notes.length<2 || Input.lastStrike<Input.stepAt) return;   // ringing is not playing
-    const found = Input.chordPresence(ev.notes);
-    if(!found) return;
-    // up to 3 notes need all of them; 4 or more may drop one
-    if(found.length >= (ev.notes.length>3 ? ev.notes.length-1 : ev.notes.length)){
+    const p = Input.chordPresence(ev.notes);
+    if(!p) return;
+    const found = new Set([...p, ...this.satisfied]);   // freshly sounding, or struck (onset)
+    // every note of the chord, up to 4; bigger chords may drop one
+    if(found.size >= (ev.notes.length>4 ? ev.notes.length-1 : ev.notes.length)){
       this.hits++; this.streak++; this.bestStreak=Math.max(this.bestStreak,this.streak);
       UI.markDone(this.idx); this.idx++; this.satisfied=new Set();
       if(this.idx>=this.L.events.length){ this.finish(); return; }
