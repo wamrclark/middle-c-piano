@@ -1909,9 +1909,13 @@ const Input = {
     const prevAvg = this._rmsHist.length ? this._rmsHist.reduce((a,b)=>a+b,0)/this._rmsHist.length : 0;
     this._rmsHist.push(rms); if(this._rmsHist.length>10) this._rmsHist.shift();
     const avgRms = prevAvg;
-    // room noise floor: drops at once, creeps up slowly, so the gate follows the room
-    if(this._floor==null) this._floor=rms;
-    this._floor = rms<this._floor ? rms : this._floor + (rms-this._floor)*0.003;
+    // room noise floor: the quietest moment of the last ~8 s. (It used to creep up
+    // under sustained sound, so a held chord raised the gate and, as the chord
+    // faded, the next notes fell below it and weren't heard at all.)
+    const fl=this._fl||(this._fl={mins:[], cur:Infinity, t:now});
+    fl.cur=Math.min(fl.cur, rms);
+    if(now-fl.t>1000){ fl.mins.push(fl.cur); if(fl.mins.length>8) fl.mins.shift(); fl.cur=rms; fl.t=now; }
+    this._floor=Math.min(fl.cur, ...fl.mins);
     const gate = Math.min(0.02, Math.max(0.0035, this._floor*3));
     // chord target: scan the long-window spectrum every ~60 ms and keep the history
     if(this.suppressMono && now-this._lastScan>60){
@@ -1923,7 +1927,7 @@ const Input = {
       // this slow window for ~0.35 s, so they are left alone until it settles.
       for(const m of this.targetNotes||[]){
         if(this._prev.includes(m) && now-this.stepAt<400){ s.delete(m); continue; }
-        const a=s.fund.get(m)||0;
+        const a=s.lev.get(m)||0;
         if(!lo.has(m) || a<lo.get(m)) lo.set(m,a);
         if(!(a > lo.get(m)*2)) s.delete(m);
       }
@@ -2017,12 +2021,14 @@ const Input = {
     // a note counts if it showed in at least 2 of the last ~10 scans, so a
     // rolled chord, or hands landing a beat apart, still adds up
     return candidates.filter(m=>this._cp.filter(set=>set.has(m)).length>=2);
-  },
-  /* A new step lit up. The notes just played are still "arriving" in the
+  },  /* A new step lit up. The notes just played are still "arriving" in the
      slower analyser for a moment; don't let that tail count as a new strike. */
   newStep(prev){
     this._cp=[]; this._cpLo=new Map(); this._prev=prev; this.stepAt=performance.now();
     for(const m of prev){ if(this._tHist) this._tHist.delete(m); if(this._tLast) this._tLast.set(m, this.stepAt); }
+    // the last strike's attack can also look like a new note starting: nothing
+    // counts as struck in the first 0.15 s after a step lights up
+    if(this._tLast) for(const m of this.targetNotes||[]) if(!prev.includes(m)) this._tLast.set(m, this.stepAt-50);
   },
 
   _on(m,v){
@@ -2068,26 +2074,35 @@ function noteEnergies(mags, binHz, lowM, highM, tr){
 }
 /* A note an octave, octave+fifth or two octaves above a loud one can just be
    that note's own overtone; a real note is about as loud as the one below. */
-function isOvertone(m, a, fund, medF){
+function isOvertone(m, a, fund, medF, live){
+  // live(L): only a lower note that is being struck right now can explain a fresh rise at m
+  const ok=L=>!live || live(L);
   const lo12=fund.get(m-12), lo19=fund.get(m-19), lo24=fund.get(m-24);
-  return (lo12>medF*4 && a<lo12*0.7) || (lo19>medF*4 && a<lo19*0.5) || (lo24>medF*4 && a<lo24*0.4);
+  return (ok(m-12) && lo12>medF*4 && a<lo12*0.7) || (ok(m-19) && lo19>medF*4 && a<lo19*0.5) || (ok(m-24) && lo24>medF*4 && a<lo24*0.4);
 }
 function chordScoreMags(mags, binHz, cands, tr){
-  const {fund, tot, medF, medT} = noteEnergies(mags, binHz, Math.min(36,...cands)-25, Math.max(84,...cands)+1, tr);
-  let maxF=0; for(const m of cands) maxF=Math.max(maxF, fund.get(m)||0);
-  const out=new Set();
+  const {fund, medF, medT} = noteEnergies(mags, binHz, Math.min(36,...cands)-25, Math.max(84,...cands)+20, tr);
+  // A note's own evidence: its fundamental plus 2nd and 3rd partials, leaving out
+  // a partial that lands on another note of the chord. On a real piano the low
+  // notes have weak fundamentals, so their partials carry most of the sound.
+  const own=m=>(fund.get(m)||0) + (cands.includes(m+12)?0:0.5*(fund.get(m+12)||0)) + (cands.includes(m+19)?0:0.25*(fund.get(m+19)||0));
+  let maxO=0; for(const m of cands) maxO=Math.max(maxO, own(m));
+  const out=new Set(), lev=new Map();
   for(const m of cands){
-    const a=fund.get(m), t=tot.get(m);
-    if(!(a>medF*4 && t>medT*4 && a>maxF*0.3)) continue;
+    const a=fund.get(m), o=own(m); lev.set(m,o);
+    if(!(o>medT*4 && a>medF*1.5 && o>maxO*0.15)) continue;
+    // not a neighbour's spill (spill is far weaker than its source; a semitone
+    // beside it can also hold a chord note's overtone, so only a big gap counts)
+    if([m-1,m+1].some(n=>!cands.includes(n) && (fund.get(n)||0)>a*2)) continue;
     if(isOvertone(m, a, fund, medF)) continue;
     out.add(m);
   }
-  out.fund=fund;   // levels, so the caller can tell a fresh note from a held one
+  out.lev=lev;   // levels, so the caller can tell a fresh note from a held one
   return out;
 }
 /* Which expected notes were just struck? A strike = that note's energy jumps
-   to RISE x its recent low, stands well above the background, is louder than
-   the semitones either side (so a neighbour's spill doesn't count), and is not
+   to RISE x its recent low, stands well above the background, is at least half
+   as loud as the semitones either side (so a neighbour's spill doesn't count), and is not
    just an overtone of a lower note. It must hold for two frames in a row
    (~30 ms), because the very first frame of any attack smears across the
    spectrum. hist keeps each target's recent levels and pending flag. */
@@ -2095,6 +2110,10 @@ function targetOnsets(mags, binHz, targets, hist, tr){
   const RISE=1.35;
   for(const k of [...hist.keys()]) if(!targets.includes(k)) hist.delete(k);
   const {fund, tot, medF, medT} = noteEnergies(mags, binHz, Math.min(36,...targets)-25, Math.max(84,...targets)+1, tr);
+  // A left-hand note held from before is not rising; a right-hand note an octave
+  // above it is a real strike, not its overtone. Recent frames tell which is which.
+  const pf=targetOnsets._pf||(targetOnsets._pf=[]);
+  const rising=L=>{ let lo=Infinity; for(const f of pf){ const v=f.get(L); if(v!=null && v<lo) lo=v; } return lo===Infinity || (fund.get(L)||0) > lo*RISE; };
   const out=[];
   for(const m of targets){
     const a=fund.get(m), e=tot.get(m);
@@ -2102,12 +2121,13 @@ function targetOnsets(mags, binHz, targets, hist, tr){
     const base=st.h.length ? Math.min(...st.h.slice(-6)) : Infinity;
     st.h.push(e); if(st.h.length>10) st.h.shift(); hist.set(m,st);
     const ok = e > base*RISE && a>medF*4 && e>medT*5 &&
-               a >= Math.max(fund.get(m-1)||0, fund.get(m+1)||0) &&
-               !isOvertone(m, a, fund, medF);
+               a*2 >= Math.max(fund.get(m-1)||0, fund.get(m+1)||0) &&
+               !isOvertone(m, a, fund, medF, rising);
     if(!ok){ st.pend=false; continue; }
     if(!st.pend){ st.pend=true; st.h.pop(); continue; }   // keep the pre-attack low as the base
     out.push(m); hist.set(m,{h:[],pend:false});           // the next strike must rise from here
   }
+  pf.push(fund); if(pf.length>4) pf.shift();
   return out;
 }
 
@@ -3231,7 +3251,7 @@ const UI = {
       if(Input._cpIdx!==S.idx){ const prev=L && L.events[Input._cpIdx]; Input._cpIdx=S.idx; Input.newStep(prev ? prev.notes : []); }
       if(L && L.events.length){
         let lo=127; for(const e2 of L.events) for(const m of e2.notes) if(m<lo) lo=m;
-        Input.minExpected = Math.max(21, lo-3);
+        Input.minExpected = Math.max(21, lo-1);   // phantom low readings (E2/F2 under a real piano) sat in the old 3-semitone margin
       }
     }
     this.$('kbdInner').querySelectorAll('.target').forEach(e=>e.classList.remove('target'));
