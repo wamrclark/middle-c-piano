@@ -508,6 +508,16 @@ button,.wk,.bk,.kbd,.hud,.rail-tabs,.lesson-item{-webkit-user-select:none;user-s
   .rail-tabs button{min-height:46px}
   .lesson-item{padding:11px 12px}
 }
+/* my songs */
+.file-picker{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px}
+.add-song{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:11px 12px;margin:2px 0 4px;
+  border:1px solid var(--rule);border-radius:8px;color:var(--brass);background:var(--surface);transition:background .13s,border-color .13s}
+.add-song:hover{border-color:var(--brass)}
+.add-song:active{background:var(--brass-wash)}
+.add-song svg{width:18px;height:18px;flex:0 0 auto}
+.add-song .li-title{color:var(--ink);font-weight:500;display:block}
+.add-song .li-meta{font-size:var(--step--1);color:var(--ink-3);display:block;margin-top:1px}
+.byline-act{font-size:var(--step--1);color:var(--felt);font-weight:600;text-decoration:underline;text-underline-offset:3px;margin-left:2px}
 @media (prefers-reduced-motion: reduce){ .ctl:active,.pill:active,.icon-btn:active,.opt:active{transform:none} }
 </style>
 
@@ -1835,7 +1845,12 @@ const Input = {
       src.connect(an2);
       this._mic = {stream, an, an2, ctx, buf:new Float32Array(2048), ds:new Float32Array(1024),
                    freq:new Float32Array(an.frequencyBinCount), freq2:new Float32Array(an2.frequencyBinCount)};
-      this._cp=[]; this._lastScan=0;
+      const an3 = ctx.createAnalyser();            // medium window: watches the expected notes for a new strike
+      an3.fftSize = 8192; an3.smoothingTimeConstant = 0;
+      src.connect(an3);
+      this._mic.an3=an3; this._mic.freq3=new Float32Array(an3.frequencyBinCount);
+      this._mic.mags3=new Float32Array(an3.frequencyBinCount);
+      this._cp=[]; this._lastScan=0; this._tHist=new Map(); this._tLast=new Map();
       this._loop();
       this.lastMicError = null;
       return true;
@@ -1890,20 +1905,25 @@ const Input = {
     const prevAvg = this._rmsHist.length ? this._rmsHist.reduce((a,b)=>a+b,0)/this._rmsHist.length : 0;
     this._rmsHist.push(rms); if(this._rmsHist.length>10) this._rmsHist.shift();
     const avgRms = prevAvg;
+    // room noise floor: drops at once, creeps up slowly, so the gate follows the room
+    if(this._floor==null) this._floor=rms;
+    this._floor = rms<this._floor ? rms : this._floor + (rms-this._floor)*0.003;
+    const gate = Math.min(0.02, Math.max(0.0035, this._floor*3));
     // chord target: scan the long-window spectrum every ~60 ms and keep the history
     if(this.suppressMono && now-this._lastScan>60){
       this._lastScan=now;
-      this._cp.push(chordScan(this._mic, this.targetNotes||[]));
+      this._cp.push(chordScan(this._mic, this.targetNotes||[], this.tuneRatio()));
       if(this._cp.length>10) this._cp.shift();
     }
 
-    if(rms < 0.006){
+    if(rms < gate){
       this._silent++;
       if(this._silent>3 && this._lastMidi!=null){ this._off(this._lastMidi); this._lastMidi=null; this._stable=0; }
       if(this.onPitch) this.onPitch(null, 0, rms);
       return;
     }
     this._silent=0;
+    if(this.targetNotes && this.targetNotes.length) this._trackTargets(now);
 
     // decimate by 2 with a 2-tap average: plenty of bandwidth for piano
     for(let i=0;i<1024;i++) ds[i]=(buf[2*i]+buf[2*i+1])*.5;
@@ -1911,9 +1931,11 @@ const Input = {
     const f0 = mpm(ds, sr, 62, 1600);
 
     if(f0<=0){ if(this.onPitch) this.onPitch(null,0,rms); return; }
-    const mf = freqToMidiFloat(f0);
+    const raw = freqToMidiFloat(f0);
+    const mf = raw - (this.tuneCents||0)/100;   // correct for the piano's own tuning
     const m = Math.round(mf);
     const cents = Math.round((mf-m)*100);
+    this._learnTuning(raw, m);
     if(this.onPitch) this.onPitch(m, cents, rms);
     if(m<21||m>108) return;
     // A chord makes a monophonic detector report the common difference period –
@@ -1925,7 +1947,7 @@ const Input = {
       // same pitch: a fresh attack shows up as a sharp jump in level
       // (was: needed a jump of 2.1x AND an absolute level of 0.02, which a
       // quiet iPad mic never reaches, so repeated notes were missed)
-      if(rms > avgRms*1.7 && rms>0.009 && now-(this._lastAttack||0)>140){ this._lastAttack=now; this._off(m); this._on(m,.8); }
+      if(rms > avgRms*1.7 && rms>gate*1.5 && now-(this._lastAttack||0)>140){ this._lastAttack=now; this._off(m); this._on(m,.8); }
       return;
     }
     if(m===this._cand){ this._stable++; } else { this._cand=m; this._stable=1; }
@@ -1940,6 +1962,32 @@ const Input = {
     }
   },
 
+  tuneCents:0,
+  tuneRatio(){ return Math.pow(2,(this.tuneCents||0)/1200); },
+  /* An acoustic piano is rarely exactly at A440. Every time we hear the note
+     the lesson asked for, note how far off it was; the median of the last 25
+     becomes the correction (capped at 45 cents). */
+  _learnTuning(raw, m){
+    if(!this.targetNotes || !this.targetNotes.includes(m)) return;
+    const h=this._tuneHist||(this._tuneHist=[]);
+    h.push((raw-m)*100); if(h.length>25) h.shift();
+    if(h.length>=8){ const v=[...h].sort((a,b)=>a-b); this.tuneCents=Math.max(-45,Math.min(45,v[v.length>>1])); }
+  },
+  /* Score-informed listening: we know which notes come next, so watch just
+     those for a fresh strike, even while the previous note is still ringing. */
+  _trackTargets(now){
+    const {an3,freq3,mags3,ctx}=this._mic;
+    an3.getFloatFrequencyData(freq3);
+    for(let i=0;i<mags3.length;i++) mags3[i]=Math.pow(10,freq3[i]/20);
+    const hits=targetOnsets(mags3, ctx.sampleRate/an3.fftSize, this.targetNotes, this._tHist, this.tuneRatio());
+    for(const m of hits){
+      if(now-(this._tLast.get(m)||0)<200) continue;
+      this._tLast.set(m,now);
+      if(this.held.has(m)) this._off(m);
+      this._on(m,.8);
+    }
+  },
+
   /* Which of a set of candidate pitches are currently sounding?
      Spectral, and only ever approximate: used for chord checking. */
   chordPresence(candidates){
@@ -1950,7 +1998,13 @@ const Input = {
   },
   resetChordHistory(){ this._cp=[]; },
 
-  _on(m,v){ if(this.held.has(m)) return; this.held.add(m); if(this.onOn) this.onOn(m,v); },
+  _on(m,v){
+    if(this.held.has(m)) return;
+    this.held.add(m);
+    // two listeners can catch the same strike; a note only counts once per 180 ms
+    if(this.mode==='mic'){ const t=performance.now(), at=this._onAt||(this._onAt=new Map()); if(t-(at.get(m)||0)<180) return; at.set(m,t); }
+    if(this.onOn) this.onOn(m,v);
+  },
   _off(m){ if(!this.held.has(m)) return; this.held.delete(m); if(this.onOff) this.onOff(m); },
   tapOn(m){ this._on(m,.75); }, tapOff(m){ this._off(m); }
 };
@@ -1958,15 +2012,19 @@ const Input = {
 /* Which of the candidate pitches are sounding right now? Reads the long-window
    spectrum, scores each candidate by its fundamental plus its 2nd and 3rd
    harmonics, and compares that to the typical level across every semitone. */
-function chordScan(mic, cands){
+function chordScan(mic, cands, tr){
   const {an2, freq2, ctx} = mic;
   an2.getFloatFrequencyData(freq2);
   const binHz = ctx.sampleRate/an2.fftSize;
   const mags = new Float32Array(freq2.length);
   for(let i=0;i<mags.length;i++) mags[i]=Math.pow(10,freq2[i]/20);
-  return chordScoreMags(mags, binHz, cands);
+  return chordScoreMags(mags, binHz, cands, tr);
 }
-function chordScoreMags(mags, binHz, cands){
+/* Energy of every semitone in a range: its fundamental (fund) and fundamental
+   plus 2nd and 3rd harmonics (tot), with the medians across the range as the
+   "background" level. tr shifts every pitch for the piano's own tuning. */
+function noteEnergies(mags, binHz, lowM, highM, tr){
+  tr = tr||1;
   const peakAt=(f)=>{
     const w=Math.max(binHz*1.2, f*0.02);          // about a third of a semitone each side
     const lo=Math.max(1,Math.floor((f-w)/binHz)), hi=Math.min(mags.length-1,Math.ceil((f+w)/binHz));
@@ -1974,24 +2032,53 @@ function chordScoreMags(mags, binHz, cands){
     return b;
   };
   const fund=new Map(), tot=new Map();
-  const lowM=Math.min(36,...cands)-1, highM=Math.max(84,...cands)+1;
   for(let m=lowM;m<=highM;m++){
-    const f=midiToFreq(m), a=peakAt(f);
+    const f=midiToFreq(m)*tr, a=peakAt(f);
     fund.set(m,a); tot.set(m, a + 0.5*peakAt(2*f) + 0.25*peakAt(3*f));
   }
   const med=(map)=>{ const v=[...map.values()].sort((a,b)=>a-b); return v[v.length>>1]||1e-9; };
-  const medF=med(fund), medT=med(tot);
+  return {fund, tot, medF:med(fund), medT:med(tot)};
+}
+/* A note an octave, octave+fifth or two octaves above a loud one can just be
+   that note's own overtone; a real note is about as loud as the one below. */
+function isOvertone(m, a, fund, medF){
+  const lo12=fund.get(m-12), lo19=fund.get(m-19), lo24=fund.get(m-24);
+  return (lo12>medF*4 && a<lo12*0.7) || (lo19>medF*4 && a<lo19*0.5) || (lo24>medF*4 && a<lo24*0.4);
+}
+function chordScoreMags(mags, binHz, cands, tr){
+  const {fund, tot, medF, medT} = noteEnergies(mags, binHz, Math.min(36,...cands)-25, Math.max(84,...cands)+1, tr);
   let maxF=0; for(const m of cands) maxF=Math.max(maxF, fund.get(m)||0);
   const out=new Set();
   for(const m of cands){
     const a=fund.get(m), t=tot.get(m);
     if(!(a>medF*4 && t>medT*4 && a>maxF*0.3)) continue;
-    // a note an octave (or octave+fifth) above a loud one can just be that
-    // note's own overtone; real notes are about as loud as the one below
-    const lo12=fund.get(m-12), lo19=fund.get(m-19);
-    if(lo12>medF*4 && a<lo12*0.7) continue;
-    if(lo19>medF*4 && a<lo19*0.5) continue;
+    if(isOvertone(m, a, fund, medF)) continue;
     out.add(m);
+  }
+  return out;
+}
+/* Which expected notes were just struck? A strike = that note's energy jumps
+   to RISE x its recent low, stands well above the background, is louder than
+   the semitones either side (so a neighbour's spill doesn't count), and is not
+   just an overtone of a lower note. It must hold for two frames in a row
+   (~30 ms), because the very first frame of any attack smears across the
+   spectrum. hist keeps each target's recent levels and pending flag. */
+function targetOnsets(mags, binHz, targets, hist, tr){
+  const RISE=1.35;
+  for(const k of [...hist.keys()]) if(!targets.includes(k)) hist.delete(k);
+  const {fund, tot, medF, medT} = noteEnergies(mags, binHz, Math.min(36,...targets)-25, Math.max(84,...targets)+1, tr);
+  const out=[];
+  for(const m of targets){
+    const a=fund.get(m), e=tot.get(m);
+    const st=hist.get(m)||{h:[],pend:false};
+    const base=st.h.length ? Math.min(...st.h.slice(-6)) : Infinity;
+    st.h.push(e); if(st.h.length>10) st.h.shift(); hist.set(m,st);
+    const ok = e > base*RISE && a>medF*4 && e>medT*5 &&
+               a >= Math.max(fund.get(m-1)||0, fund.get(m+1)||0) &&
+               !isOvertone(m, a, fund, medF);
+    if(!ok){ st.pend=false; continue; }
+    if(!st.pend){ st.pend=true; st.h.pop(); continue; }   // keep the pre-attack low as the base
+    out.push(m); hist.set(m,{h:[],pend:false});           // the next strike must rise from here
   }
   return out;
 }
@@ -2348,6 +2435,222 @@ const Session = {
 /* ==============================================================
    UI
    ============================================================== */
+/* ==============================================================
+   MY SONGS: open a score file (MusicXML .musicxml/.xml/.mxl, or MIDI
+   .mid) and practise it like any built-in song. Kept on this device
+   only (localStorage), never uploaded anywhere.
+   ============================================================== */
+const FIFTHS_KEY={'-7':'C♭','-6':'G♭','-5':'D♭','-4':'A♭','-3':'E♭','-2':'B♭','-1':'F','0':'C','1':'G','2':'D','3':'A','4':'E','5':'B','6':'F♯','7':'C♯'};
+for(const [f,k] of Object.entries(FIFTHS_KEY)) if(!KEYS[k]) KEYS[k]={acc:Math.abs(+f), type:+f<0?'flat':'sharp'};
+
+const MySongs = {
+  KEY:'middlec-mysongs',
+  load(){ try{ return JSON.parse(localStorage.getItem(this.KEY)||'[]'); }catch(e){ return []; } },
+  save(list){ try{ localStorage.setItem(this.KEY, JSON.stringify(list)); return true; }catch(e){ return false; } },
+  install(){ for(const s of this.load()) if(!SONGS.some(x=>x.id===s.id)) SONGS.push(s); },
+  add(song){
+    const list=this.load(); list.push(song);
+    if(!this.save(list)) return false;
+    SONGS.push(song); return true;
+  },
+  remove(id){
+    this.save(this.load().filter(s=>s.id!==id));
+    const i=SONGS.findIndex(s=>s.id===id); if(i>=0) SONGS.splice(i,1);
+  }
+};
+
+async function importSongFile(file){
+  const buf=await file.arrayBuffer(), u8=new Uint8Array(buf);
+  let p;
+  if(u8[0]===0x4d && u8[1]===0x54 && u8[2]===0x68 && u8[3]===0x64) p=parseMIDI(new DataView(buf));   // "MThd"
+  else if(u8[0]===0x50 && u8[1]===0x4b) p=parseMusicXML(await unzipScore(buf));                       // zip = .mxl
+  else p=parseMusicXML(new TextDecoder().decode(buf));
+  if(!p.notes.length) throw new Error('No notes found in that file.');
+  if(!p.title) p.title=file.name.replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ');
+  return songFromNotes(p);
+}
+
+/* MusicXML: picks the first part with two staves (the piano), else the first part.
+   Times are in quarter notes. Tied continuations are marked so they aren't replayed. */
+function parseMusicXML(text){
+  const doc=new DOMParser().parseFromString(text,'application/xml');
+  if(doc.querySelector('parsererror') || !doc.querySelector('part')) throw new Error('That file is not a score this app can read. Try MusicXML or MIDI.');
+  const txt=(el,sel)=>{ const e=el.querySelector(sel); return e?e.textContent.trim():''; };
+  const parts=[...doc.querySelectorAll('part')];
+  const part=parts.find(pt=>{ const st=pt.querySelector('attributes > staves'); return st && +st.textContent>=2; }) || parts[0];
+  const out={title:txt(doc,'work > work-title')||txt(doc,'movement-title'),
+             composer:txt(doc,'identification > creator[type="composer"]'),
+             fifths:0, beats:4, beatType:4, bpm:0, pickup:0, clef1:'G', notes:[]};
+  const PC={C:0,D:2,E:4,F:5,G:7,A:9,B:11};
+  let div=1, pos=0, lastOnset=0, first=true;
+  for(const meas of part.children){
+    if(meas.tagName!=='measure') continue;
+    const start=pos; let far=pos;
+    for(const el of meas.children){
+      const tag=el.tagName;
+      if(tag==='attributes'){
+        const d=txt(el,'divisions'); if(d) div=+d||1;
+        if(first){
+          const f=txt(el,'key > fifths'); if(f!=='') out.fifths=Math.max(-7,Math.min(7,+f||0));
+          const b=txt(el,'time > beats'), bt=txt(el,'time > beat-type'); if(b){ out.beats=parseInt(b)||4; out.beatType=+bt||4; }
+          const c=el.querySelector('clef:not([number]) > sign, clef[number="1"] > sign'); if(c) out.clef1=c.textContent.trim();
+        }
+      } else if(tag==='direction' || tag==='sound'){
+        const snd = tag==='sound' ? el : el.querySelector('sound[tempo]');
+        if(snd && snd.getAttribute('tempo') && !out.bpm) out.bpm=+snd.getAttribute('tempo');
+      } else if(tag==='backup'){ pos-= (+txt(el,'duration')||0)/div; }
+      else if(tag==='forward'){ pos+= (+txt(el,'duration')||0)/div; far=Math.max(far,pos); }
+      else if(tag==='note'){
+        if(el.querySelector('grace')) continue;
+        const dur=(+txt(el,'duration')||0)/div;
+        const chord=!!el.querySelector('chord');
+        const onset = chord ? lastOnset : pos;
+        if(!chord){ lastOnset=pos; pos+=dur; far=Math.max(far,pos); }
+        const pt=el.querySelector('pitch'); if(!pt) continue;
+        const m=(parseInt(txt(pt,'octave'))+1)*12 + PC[txt(pt,'step')] + Math.round(+txt(pt,'alter')||0);
+        if(!(m>=21 && m<=108)) continue;
+        const fg=txt(el,'notations technical fingering');
+        out.notes.push({t:onset, d:dur, m, staff:+txt(el,'staff')||1,
+          tie:!!el.querySelector('tie[type="stop"]'), finger:/^[1-5]$/.test(fg)?+fg:null});
+      }
+    }
+    if(first && meas.getAttribute('implicit')==='yes') out.pickup=far-start;
+    first=false; pos=far;
+  }
+  return out;
+}
+
+/* .mxl is a zip: read its table of contents, find the score, inflate it. */
+async function unzipScore(buf){
+  const dv=new DataView(buf), u8=new Uint8Array(buf), dec=new TextDecoder();
+  let e=-1;
+  for(let i=u8.length-22;i>=Math.max(0,u8.length-65557);i--) if(dv.getUint32(i,true)===0x06054b50){ e=i; break; }
+  if(e<0) throw new Error('That .mxl file looks damaged.');
+  const files=[]; let p=dv.getUint32(e+16,true);
+  for(let k=dv.getUint16(e+10,true); k>0 && dv.getUint32(p,true)===0x02014b50; k--){
+    const nlen=dv.getUint16(p+28,true);
+    files.push({name:dec.decode(u8.subarray(p+46,p+46+nlen)), method:dv.getUint16(p+10,true),
+                size:dv.getUint32(p+20,true), off:dv.getUint32(p+42,true)});
+    p+=46+nlen+dv.getUint16(p+30,true)+dv.getUint16(p+32,true);
+  }
+  const read=async f=>{
+    const at=f.off+30+dv.getUint16(f.off+26,true)+dv.getUint16(f.off+28,true);
+    const data=u8.subarray(at, at+f.size);
+    if(f.method===0) return dec.decode(data);
+    if(typeof DecompressionStream==='undefined') throw new Error('This browser cannot open .mxl files. Export as uncompressed MusicXML instead.');
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+  };
+  let target=null;
+  const cont=files.find(f=>f.name==='META-INF/container.xml');
+  if(cont){ const mm=/full-path="([^"]+)"/.exec(await read(cont)); if(mm) target=files.find(f=>f.name===mm[1]); }
+  if(!target) target=files.find(f=>!f.name.startsWith('META-INF') && /\.(xml|musicxml)$/i.test(f.name));
+  if(!target) throw new Error('No score found inside that .mxl file.');
+  return read(target);
+}
+
+/* Standard MIDI file. Two or more tracks: the higher one is the right hand.
+   One track: split at middle C. Times snapped to a twelfth of a beat. */
+function parseMIDI(dv){
+  const u8=new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+  const tag=o=>String.fromCharCode(u8[o],u8[o+1],u8[o+2],u8[o+3]);
+  const tpq=dv.getUint16(12);
+  if(tpq & 0x8000) throw new Error('This MIDI file uses a timing format the app does not read.');
+  const out={title:'', composer:'', fifths:0, beats:4, beatType:4, bpm:0, pickup:0, clef1:'G', notes:[]};
+  const tracks=[]; let p=8+dv.getUint32(4);
+  for(let tr=0, n=dv.getUint16(10); tr<n && p+8<=u8.length && tag(p)==='MTrk'; tr++){
+    let q=p+8; const end=Math.min(u8.length, q+dv.getUint32(p+4)); p=end;
+    let tick=0, run=0; const on=new Map(), notes=[];
+    const vlq=()=>{ let v=0,b; do{ b=u8[q++]; v=(v<<7)|(b&0x7f); }while((b&0x80) && q<end); return v; };
+    while(q<end){
+      tick+=vlq();
+      let st=u8[q];
+      if(st & 0x80){ q++; if(st<0xf0) run=st; } else st=run;
+      if(st===0xff){
+        const type=u8[q++], l=vlq(), d=u8.subarray(q,q+l); q+=l;
+        if(type===0x51 && l===3 && !out.bpm) out.bpm=60000000/((d[0]<<16)|(d[1]<<8)|d[2]);
+        else if(type===0x58 && tick===0){ out.beats=d[0]; out.beatType=1<<d[1]; }
+        else if(type===0x59 && tick===0) out.fifths=Math.max(-7,Math.min(7,(d[0]<<24)>>24));
+        else if(type===0x03 && !out.title && tr===0) out.title=new TextDecoder().decode(d).trim();
+        continue;
+      }
+      if(st===0xf0 || st===0xf7){ q+=vlq(); continue; }
+      const type=st&0xf0, ch=st&0x0f, a=u8[q++], b=(type===0xc0||type===0xd0)?0:u8[q++];
+      if(ch===9) continue;                                   // drums
+      const key=ch*128+a;
+      if(type===0x90 && b>0){ if(!on.has(key)) on.set(key,[]); on.get(key).push(tick); }
+      else if(type===0x80 || (type===0x90 && b===0)){
+        const s=on.get(key); if(s && s.length){ const t0=s.shift(); notes.push({t:t0/tpq, d:Math.max(1,tick-t0)/tpq, m:a}); }
+      }
+    }
+    if(notes.length) tracks.push(notes);
+  }
+  const snap=x=>Math.round(x*12)/12;
+  const avg=ns=>ns.reduce((s,n)=>s+n.m,0)/ns.length;
+  if(tracks.length>=2){
+    const [a,b]=[tracks[0],tracks[1]].sort((x,y)=>avg(y)-avg(x));
+    for(const n of a) out.notes.push({...n, staff:1});
+    for(const n of b) out.notes.push({...n, staff:2});
+  } else if(tracks.length===1){
+    const lo=tracks[0].some(n=>n.m<60), hi=tracks[0].some(n=>n.m>=60);
+    for(const n of tracks[0]) out.notes.push({...n, staff:(lo&&hi)?(n.m>=60?1:2):1});
+    if(lo && !hi) out.clef1='F';
+  }
+  // drop whole empty bars at the start, then snap
+  const barQ=out.beats*4/out.beatType;
+  const t0=out.notes.length ? Math.min(...out.notes.map(n=>n.t)) : 0;
+  const shift=Math.floor((t0+1e-6)/barQ)*barQ;
+  for(const n of out.notes){ n.t=snap(n.t-shift); n.d=Math.max(1/12, snap(n.d)); n.tie=false; n.finger=null; }
+  return out;
+}
+
+/* Turn timed notes into the app's song format: one stream per hand, notes that
+   start together become chords, gaps become rests (split at bar lines). */
+function songFromNotes(p){
+  const barQ=p.beats*4/p.beatType;
+  const ts=Number.isInteger(barQ) ? [barQ,4] : [p.beats,p.beatType];
+  const bar={p:p.pickup||0, len:barQ};
+  const stream=staff=>{
+    const by=new Map(), q=x=>Math.round(x*48)/48;
+    for(const n of p.notes){
+      if(n.staff!==staff || n.tie) continue;
+      const t=q(n.t);
+      if(!by.has(t)) by.set(t,{t, ms:[], fs:[], d:Infinity});
+      const g=by.get(t);
+      if(!g.ms.includes(n.m)){ g.ms.push(n.m); g.fs.push(n.finger); }
+      g.d=Math.min(g.d, q(n.d)||1/12);
+    }
+    const gs=[...by.values()].sort((a,b)=>a.t-b.t), out=[];
+    let cur=0;
+    const rest=(from,to)=>{
+      while(to-from>1e-6){
+        const k=Math.floor((from-bar.p)/bar.len+1e-6)+1, edge=bar.p+k*bar.len;
+        const end=Math.min(to, edge>from+1e-6?edge:to);
+        out.push([null, round4(end-from)]); from=end;
+      }
+    };
+    gs.forEach((g,i)=>{
+      if(g.t>cur+1e-6) rest(cur,g.t);
+      const next = i+1<gs.length ? gs[i+1].t : g.t+g.d;
+      const d = round4(Math.min(g.d, next-g.t)) || round4(next-g.t);
+      const order=g.ms.map((m,k)=>[m,g.fs[k]]).sort((a,b)=>a[0]-b[0]);
+      const ms=order.map(x=>x[0]), fs=order.map(x=>x[1]);
+      const finger = ms.length===1 ? fs[0] : (fs.every(f=>f) ? fs : null);
+      out.push([ms.length>1?ms:ms[0], d, finger]);
+      cur=g.t+d;
+    });
+    return out;
+  };
+  const has=st=>p.notes.some(n=>n.staff===st && !n.tie);
+  const song={id:'my-'+Date.now().toString(36), title:p.title.slice(0,60), composer:p.composer||'Added by you',
+    level:4, mine:true, keySig:FIFTHS_KEY[String(p.fifths)]||'C', ts,
+    bpm:Math.max(40,Math.min(180, 2*Math.round((p.bpm||80)/2))),
+    note:'Your song. A tied note shows as a rest after it: keep holding.'};
+  if(has(1) && has(2)){ song.hands='grand'; song.rh=stream(1); song.lh=stream(2); }
+  else { const st=has(1)?1:2; song.rh=stream(st); song.hands=(st===2 || p.clef1==='F')?'lh':'rh'; }
+  if(bar.p) song.pickup=bar.p;
+  return song;
+}
+
 const UI = {
   tab:'songs', current:null, bpm:84, noteEls:new Map(), xmap:null, keyEls:new Map(),
   kbRange:[48,84],
@@ -2355,6 +2658,23 @@ const UI = {
 
   init(){
     this.$ = id=>document.getElementById(id);
+    MySongs.install();
+    // file picker for "Add a song" (no accept filter: iPad greys out .mxl/.musicxml otherwise)
+    const fi=document.createElement('input'); fi.type='file'; fi.id='songFile'; fi.className='file-picker';
+    document.body.appendChild(fi);
+    fi.onchange=async()=>{
+      const f=fi.files && fi.files[0]; fi.value=''; if(!f) return;
+      try{
+        const song=await importSongFile(f);
+        if(!MySongs.add(song)){ this.toast('Not enough room on this device to save that song'); return; }
+        if(this.tab!=='songs') document.querySelector('.rail-tabs button[data-tab="songs"]').click();
+        this.buildRail(); this.selectLesson('songs', song.id); this.closeRail();
+        this.toast('Added: '+song.title);
+      }catch(e){
+        this.msg((e && e.message) || 'Could not read that file.');
+        this.toast('Could not add that song');
+      }
+    };
     // note names (letter inside each notehead)
     const savedNN = (()=>{try{return localStorage.getItem('middlec-notenames')}catch(e){return null}})();
     if(savedNN!=null) this.showNoteNames = savedNN==='1';
@@ -2615,10 +2935,17 @@ const UI = {
   /* ---------- library rail ---------- */
   buildRail(){
     const list=this.$('railList'); list.innerHTML='';
+    if(this.tab==='songs'){
+      const add=document.createElement('button'); add.className='add-song';
+      add.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>'+
+        '<span><span class="li-title">Add a song</span><span class="li-meta">Open a MusicXML or MIDI file</span></span>';
+      add.onclick=()=>this.$('songFile').click();
+      list.appendChild(add);
+    }
     const groups={};
     const push=(g,item)=>{ (groups[g]=groups[g]||[]).push(item); };
     if(this.tab==='songs'){
-      for(const s of SONGS) push(['','First tunes','Building up','Intermediate'][s.level], {kind:'songs', raw:s, sub:s.composer});
+      for(const s of SONGS) push(['','First tunes','Building up','Intermediate','My songs'][s.level], {kind:'songs', raw:s, sub:s.composer});
     } else if(this.tab==='chords'){
       for(const c of CHORD_LESSONS) push(['','Shapes','Progressions','Progressions'][c.level], {kind:'chords', raw:c, sub:c.seq.length+' chords'});
     } else if(this.tab==='technique'){
@@ -2666,6 +2993,19 @@ const UI = {
     bits.push('Key of '+L.keySig);
     bits.push(L.events.length+' notes');
     this.$('lessonByline').innerHTML = bits.map(b=>`<span>${escapeAttr(b)}</span>`).join('');
+    if(String(L.id).startsWith('my-')){
+      const rb=document.createElement('button'); rb.className='byline-act'; rb.textContent='Remove song';
+      rb.onclick=()=>{
+        if(!rb.dataset.armed){
+          rb.dataset.armed='1'; rb.textContent='Tap again to remove';
+          setTimeout(()=>{ if(rb.isConnected){ delete rb.dataset.armed; rb.textContent='Remove song'; } }, 3000);
+          return;
+        }
+        MySongs.remove(L.id); this.toast('Removed: '+L.title);
+        this.selectLesson('songs', SONGS[0].id); this.buildRail();
+      };
+      this.$('lessonByline').appendChild(rb);
+    }
 
     const r = renderScore(L, this.showNoteNames);
     this.xmap = r.xmap; this.svgW = r.W;
