@@ -1919,12 +1919,13 @@ const Input = {
       const s=chordScan(this._mic, this.targetNotes||[], this.tuneRatio()), lo=this._cpLo;
       // a note counts only once it jumps well above its lowest level since this
       // step lit up: a chord still held from the bar before is sounding, but
-      // wasn't just played. Notes of the step just played count only by their
-      // own fresh onset (Session.satisfied), since they are still arriving here.
+      // wasn't just played. Notes of the step just played are still arriving in
+      // this slow window for ~0.35 s, so they are left alone until it settles.
       for(const m of this.targetNotes||[]){
+        if(this._prev.includes(m) && now-this.stepAt<400){ s.delete(m); continue; }
         const a=s.fund.get(m)||0;
         if(!lo.has(m) || a<lo.get(m)) lo.set(m,a);
-        if(!(a > lo.get(m)*2) || this._prev.includes(m)) s.delete(m);
+        if(!(a > lo.get(m)*2)) s.delete(m);
       }
       this._cp.push(s);
       if(this._cp.length>10) this._cp.shift();
