@@ -2462,8 +2462,8 @@ const MySongs = {
     if(!this.save(list)) return false;
     SONGS.push(song); return true;
   },
-  remove(id){
-    try{ const g=JSON.parse(localStorage.getItem('middlec-removed')||'[]'); if(!g.includes(id)){ g.push(id); localStorage.setItem('middlec-removed', JSON.stringify(g)); } }catch(e){}
+  remove(id, quiet){
+    if(!quiet) try{ const g=JSON.parse(localStorage.getItem('middlec-removed')||'[]'); if(!g.includes(id)){ g.push(id); localStorage.setItem('middlec-removed', JSON.stringify(g)); } }catch(e){}
     this.save(this.load().filter(s=>s.id!==id));
     const i=SONGS.findIndex(s=>s.id===id); if(i>=0) SONGS.splice(i,1);
   }
@@ -2705,15 +2705,21 @@ const PrivateSongs = {
     let list; try{ list=await (await fetch('private/index.json',{cache:'no-store'})).json(); }catch(e){ return 0; }
     const have=new Set(MySongs.load().map(s=>s.id));
     let gone; try{ gone=new Set(JSON.parse(localStorage.getItem('middlec-removed')||'[]')); }catch(e){ gone=new Set(); }
+    let synced; try{ synced=JSON.parse(localStorage.getItem('middlec-synced')||'{}'); }catch(e){ synced={}; }
     let added=0;
     for(const it of list){
-      const id='my-'+it.id; if(have.has(id) || gone.has(id)) continue;
+      const id='my-'+it.id; if(gone.has(id)) continue;
+      if(have.has(id) && synced[id]===it.v) continue;        // already have this version
       let plain;
       try{ plain=await this.unlock(await (await fetch('private/'+it.file,{cache:'no-store'})).arrayBuffer(), code); }
       catch(e){ try{ localStorage.removeItem(this.KEY); }catch(_){} throw new Error('That song code did not work.'); }
       const song=await importSongFile(new File([plain], it.name||it.file));
-      song.id=id; if(MySongs.add(song)) added++;
+      song.id=id;
+      // a newer version replaces the old one, and so does a copy added by hand with the same title
+      for(const s of MySongs.load()) if(s.id===id || (s.title===song.title && !synced[s.id])) MySongs.remove(s.id, true);
+      if(MySongs.add(song)){ synced[id]=it.v; added++; }
     }
+    try{ localStorage.setItem('middlec-synced', JSON.stringify(synced)); }catch(e){}
     return added;
   }
 };
