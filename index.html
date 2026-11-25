@@ -1793,6 +1793,8 @@ const Input = {
   midiAccess:null,
   _mic:null, _raf:null, _lastMidi:null, _stable:0, _silent:0, _rmsHist:[],
   suppressMono:false,   // set while the target is a chord: see chordPresence
+  lastStrike:0,         // when a key was last struck (a jump in level, or a target's onset)
+  stepAt:0,             // when the current step lit up: only strikes after it count
   minExpected:21,       // ignore anything implausibly below the lesson's range
 
   hasMIDI(){ return !!navigator.requestMIDIAccess; },
@@ -1917,6 +1919,11 @@ const Input = {
       if(this._cp.length>10) this._cp.shift();
     }
 
+    // a strike = the moment the level jumps; one jump counts once, however long it lasts
+    const up = rms > avgRms*1.7 && rms>gate*1.5;
+    if(up && !this._up) this.lastStrike=now;
+    this._up = up;
+
     if(rms < gate){
       this._silent++;
       if(this._silent>3 && this.held.size){ for(const h of [...this.held]) this._off(h); this._lastMidi=null; this._stable=0; }
@@ -1983,7 +1990,7 @@ const Input = {
     const hits=targetOnsets(mags3, ctx.sampleRate/an3.fftSize, this.targetNotes, this._tHist, this.tuneRatio());
     for(const m of hits){
       if(now-(this._tLast.get(m)||0)<200) continue;
-      this._tLast.set(m,now);
+      this._tLast.set(m,now); this.lastStrike=now;
       if(this.held.has(m)) this._off(m);
       this._on(m,.8);
       const rel=this._rel||(this._rel=new Map());
@@ -1999,7 +2006,12 @@ const Input = {
     // rolled chord, or hands landing a beat apart, still adds up
     return candidates.filter(m=>this._cp.filter(set=>set.has(m)).length>=2);
   },
-  resetChordHistory(){ this._cp=[]; },
+  /* A new step lit up. The notes just played are still "arriving" in the
+     slower analyser for a moment; don't let that tail count as a new strike. */
+  newStep(prev){
+    this._cp=[]; this.stepAt=performance.now();
+    for(const m of prev){ if(this._tHist) this._tHist.delete(m); if(this._tLast) this._tLast.set(m, this.stepAt); }
+  },
 
   _on(m,v){
     if(this.held.has(m)) return;
@@ -2314,6 +2326,7 @@ const Session = {
     this.running=true; this.idx=0; this.hits=0; this.misses=0; this.streak=0;
     this.bestStreak=0; this.nextBeat=0;
     this.satisfied=new Set();
+    Input._cpIdx=-1;   // Start counts as a fresh step: nothing heard before it counts
     UI.markAll();
     if(this.mode==='play'){
       const spb = 60/UI.bpm;
@@ -2388,6 +2401,10 @@ const Session = {
       if(this.windowOpen) this.windowHits.add(m);
       return;
     }
+    // Learn mode waits for a key struck after this step lit up. Through the mic,
+    // a left-hand chord still held from the bar before (or the note just played)
+    // keeps sounding and would otherwise "play" the next step on its own.
+    if(Input.mode==='mic' && Input.lastStrike<Input.stepAt) return;
     const ev = this.L.events[this.idx];
     if(!ev) return;
     if(ev.notes.includes(m)){
@@ -2417,7 +2434,7 @@ const Session = {
   chordPoll(){
     if(!this.running || this.mode!=='learn' || Input.mode!=='mic') return;
     const ev=this.L.events[this.idx];
-    if(!ev || ev.notes.length<2) return;
+    if(!ev || ev.notes.length<2 || Input.lastStrike<Input.stepAt) return;   // ringing is not playing
     const found = Input.chordPresence(ev.notes);
     if(!found) return;
     // up to 3 notes need all of them; 4 or more may drop one
@@ -3197,7 +3214,7 @@ const UI = {
     if(typeof Input!=='undefined'){
       Input.suppressMono = (Input.mode==='mic' && !!ev && ev.notes.length>1);
       Input.targetNotes = ev ? ev.notes : [];
-      if(Input._cpIdx!==S.idx){ Input._cpIdx=S.idx; Input.resetChordHistory(); }
+      if(Input._cpIdx!==S.idx){ const prev=L && L.events[Input._cpIdx]; Input._cpIdx=S.idx; Input.newStep(prev ? prev.notes : []); }
       if(L && L.events.length){
         let lo=127; for(const e2 of L.events) for(const m of e2.notes) if(m<lo) lo=m;
         Input.minExpected = Math.max(21, lo-3);
