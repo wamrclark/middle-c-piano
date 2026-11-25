@@ -2836,8 +2836,14 @@ const UI = {
     });
     this.$('setupSkip').onclick = ()=>{ this.setInput('tap'); this.closeSetup(); };
 
-    Input.onOn = m=>{ this.keyDown(m,true); Session.noteOn(m); if(Input.mode==='tap') Audio_.note(m,null,1.4); };
-    Input.onOff = m=>{ this.keyDown(m,false); };
+    // a note heard through the microphone lights its key briefly, like a press;
+    // a USB keyboard or a finger on the screen keeps it lit until released
+    Input.onOn = m=>{
+      this.keyDown(m,true);
+      if(Input.mode==='mic'){ const kt=this._kt||(this._kt={}); clearTimeout(kt[m]); kt[m]=setTimeout(()=>this.keyDown(m,false), 300); }
+      Session.noteOn(m); if(Input.mode==='tap') Audio_.note(m,null,1.4);
+    };
+    Input.onOff = m=>{ if(Input.mode!=='mic') this.keyDown(m,false); };
     Input.onPitch = (m,cents,rms)=>this.paintHeard(m,cents,rms);
 
     setInterval(()=>Session.chordPoll(), 90);
