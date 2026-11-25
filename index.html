@@ -671,7 +671,7 @@ button,.wk,.bk,.kbd,.hud,.rail-tabs,.lesson-item{-webkit-user-select:none;user-s
 <div class="scrim" id="teachScrim" hidden>
   <div class="sheet teach-sheet" role="dialog" aria-modal="true" aria-labelledby="teachTitle">
     <h3 id="teachTitle">Teach it your piano</h3>
-    <p>Play each key that lights up, then three chords. Middle C learns how your piano sounds through this device, and keeps the recording here so you can export it.</p>
+    <p>Play each key that lights up, then three chords. Middle C learns how your piano sounds through this device. Each recording is kept here and sent to Claude automatically.</p>
     <div class="teach-prompt" id="teachNow">Tap Start when you're at the piano.</div>
     <div class="teach-status" id="teachStatus"></div>
     <div class="kbd teach-kbd"><div class="kbd-inner" id="teachKbd"></div></div>
@@ -2087,6 +2087,7 @@ const RecDB = {
   },
   add(rec){ return this.run('readwrite', s=>s.add(rec)); },
   all(){ return this.run('readonly', s=>s.getAll()); },
+  put(rec){ return this.run('readwrite', s=>s.put(rec)); },
   del(id){ return this.run('readwrite', s=>s.delete(id)); }
 };
 
@@ -2096,6 +2097,8 @@ const RecDB = {
    on this device, and saves the recording of the pass for export. */
 const Teach = {
   KEY:'middlec-piano',
+  // Supabase (the Health Portal project): a public key, by design; the storage rules do the guarding
+  SUPA:'https://adegbeosbluqjbmhpqvp.supabase.co', ANON:'sb_publishable_SCEE5GJ9AMJXSnkX09W9Bg__LTpp05C',
   NOTES:[43,45,47,48,50,52,53,55,57,59,60,62,64,65,67,69,71,72],
   CHORDS:[[48,52,55,64],[48,53,57,60],[43,47,50,64]],
   on:false, idx:0, move:0,
@@ -2159,21 +2162,43 @@ const Teach = {
     const finished=this.on; this.on=false;
     if(rec){ await new Promise(r=>{ rec.onstop=r; rec.stop(); }); }
     const done=Object.keys(prof).length;
+    let sent=false;
     let tune=null;
     const cv=Object.values(cents).sort((a,b)=>a-b);
     if(cv.length>=3){ tune=Math.max(-45,Math.min(45,Math.round(cv[cv.length>>1]))); Input.tuneCents=tune; Input._tuneHist=[]; }
     if(done){ try{ localStorage.setItem(this.KEY, JSON.stringify({v:1, at:new Date().toISOString(), tuneCents:tune, notes:prof})); }catch(e){} }
     if(done && chunks.length){
       const info={app:'Middle C', at:new Date().toISOString(), sampleRate:mic.ctx.sampleRate, tuneCents:tune, steps:log, profile:prof, ua:navigator.userAgent};
-      try{ await RecDB.add({at:Date.now(), type, audio:new Blob(chunks,{type}), info, heard:done, of:this.NOTES.length, secs:Math.round((performance.now()-t0)/1000)}); }catch(e){}
+      const r={at:Date.now(), type, audio:new Blob(chunks,{type}), info, heard:done, of:this.NOTES.length, secs:Math.round((performance.now()-t0)/1000)};
+      ui.teachStatus('Saving and sending to Claude…');
+      try{ r.id=await RecDB.add(r); sent=await this.upload(r); }catch(e){}
     }
-    ui.teachDone(done, this.NOTES.length, tune, finished);
+    ui.teachDone(done, this.NOTES.length, tune, finished, sent);
     ui.updateHud();
   },
+  /* the private folder this device adds to: named from the song code, so only
+     Russell's devices know it. Nothing can list or read it without Claude's
+     own key (storage rules on the middle-c bucket). */
+  async folder(){
+    const c=PrivateSongs.code(); if(!c || !window.crypto || !crypto.subtle) return null;
+    const h=await crypto.subtle.digest('SHA-256', new TextEncoder().encode('middle-c-uploads:'+c));
+    return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32);
+  },
+  /* send a saved recording to Claude; marks it sent */
+  async upload(r){
+    const dir=await this.folder(); if(!dir) return false;
+    for(const f of this.files(r)){
+      const res=await fetch(`${this.SUPA}/storage/v1/object/middle-c/${dir}/${f.name}`, {method:'POST',
+        headers:{apikey:this.ANON, Authorization:'Bearer '+this.ANON, 'Content-Type':f.type||'application/octet-stream', 'x-upsert':'false'}, body:f});
+      if(!res.ok && !/already exists|Duplicate|409/.test(await res.text())) return false;
+    }
+    r.sent=true; await RecDB.put(r); return true;
+  },
+  async sendPending(){ for(const r of await RecDB.all()) if(!r.sent) await this.upload(r).catch(()=>false); },
   /* a saved recording as files: the audio plus a small data file of what
      was asked and when it was heard */
   files(r){
-    const d=new Date(r.at), stamp=d.toISOString().slice(0,16).replace(/[-:]/g,'').replace('T','-');
+    const d=new Date(r.at), stamp=d.toISOString().slice(0,19).replace(/[-:]/g,'').replace('T','-');
     const ext=(r.type||'').includes('mp4')?'m4a':'webm';
     return [new File([r.audio],`middle-c-piano-${stamp}.${ext}`,{type:r.type}),
             new File([JSON.stringify(r.info)],`middle-c-piano-${stamp}.json`,{type:'application/json'})];
@@ -3197,10 +3222,10 @@ const UI = {
   },
   teachStatus(t, ok){ const el=this.$('teachStatus'); el.textContent=t; el.classList.toggle('ok', !!ok); },
   teachHeard(notes){ this.teachKeys(notes,'down'); this.teachStatus('Got it.', true); },
-  teachDone(done, total, tune, finished){
+  teachDone(done, total, tune, finished, sent){
     this.teachKeys([], 'target');
     this.$('teachNow').textContent = done ? (finished?'All done.':'Stopped.') : 'Stopped. Nothing saved.';
-    this.teachStatus(done ? 'Heard '+done+' of '+total+' notes'+(tune!=null?'. Your piano sits '+(tune>0?'+':'')+tune+' cents from standard pitch':'')+'. Saved below.' : '', !!done);
+    this.teachStatus(done ? 'Heard '+done+' of '+total+' notes'+(tune!=null?'. Your piano sits '+(tune>0?'+':'')+tune+' cents from standard pitch':'')+(sent?'. Saved below and sent to Claude.':'. Saved below.') : '', !!done);
     this.$('teachGo').textContent = done ? 'Start again' : 'Start';
     this.$('teachBack').hidden=this.$('teachSkip').hidden=true;
     this.teachList();
@@ -3208,13 +3233,14 @@ const UI = {
   /* saved recordings, newest first, each ready to export from a single tap */
   async teachList(){
     const box=this.$('teachList');
-    let recs=[]; try{ recs=(await RecDB.all()).reverse(); }catch(e){}
+    let recs=[]; try{ await Teach.sendPending(); }catch(e){}
+    try{ recs=(await RecDB.all()).reverse(); }catch(e){}
     if(!recs.length){ box.innerHTML='<p class="small">None yet.</p>'; return; }
     box.innerHTML='';
     for(const r of recs){
       const row=document.createElement('div'); row.className='teach-rec';
       const d=new Date(r.at);
-      row.innerHTML=`<span>${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}, ${d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})} · ${r.heard} of ${r.of} notes · ${r.secs} s</span>`;
+      row.innerHTML=`<span>${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}, ${d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})} · ${r.heard} of ${r.of} notes · ${r.secs} s · ${r.sent?'sent to Claude':(PrivateSongs.code()?'not sent yet':'not sent (no song code on this device)')}</span>`;
       const files=Teach.files(r);   // built now, so Export can open the share sheet straight from the tap
       const ex=document.createElement('button'); ex.className='ctl'; ex.textContent='Export'; ex.onclick=()=>Teach.export(files);
       const del=document.createElement('button'); del.className='ctl'; del.textContent='Delete';
