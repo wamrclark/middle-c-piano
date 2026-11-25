@@ -2256,14 +2256,16 @@ function chordScoreMags(mags, binHz, cands, tr){
   // notes have weak fundamentals, so their partials carry most of the sound.
   const own=m=>(fund.get(m)||0) + (cands.includes(m+12)?0:0.5*(fund.get(m+12)||0)) + (cands.includes(m+19)?0:0.25*(fund.get(m+19)||0));
   let maxO=0; for(const m of cands) maxO=Math.max(maxO, own(m));
+  let maxF=0; for(const v of fund.values()) if(v>maxF) maxF=v;   // see targetOnsets: 3% separates a hammer thump from a real note
   const out=new Set(), lev=new Map();
   for(const m of cands){
     const a=fund.get(m), o=own(m); lev.set(m,o);
     // below middle C the fundamental can all but vanish (worst on an iPad mic), so a low note may count on its partials alone
-    if(!(o>medT*4 && (a>medF*1.5 || m<60) && o>maxO*0.15)) continue;
+    if(!(o>medT*4 && (a>medF*1.5 || m<60) && a>maxF*0.03 && o>maxO*0.15)) continue;
     // not a neighbour's spill (spill is far weaker than its source; a semitone
     // beside it can also hold a chord note's overtone, so only a big gap counts)
-    if([m-1,m+1].some(n=>!cands.includes(n) && (fund.get(n)||0)>a*2)) continue;
+    // (a neighbour that is just another chord note's overtone, e.g. F3's octave beside E4, is not spill)
+    if([m-1,m+1].some(n=>!cands.includes(n) && !cands.some(c=>[12,19,24].includes(n-c)) && (fund.get(n)||0)>a*2)) continue;
     if(isOvertone(m, a, fund, medF)) continue;
     out.add(m);
   }
@@ -2284,18 +2286,29 @@ function targetOnsets(mags, binHz, targets, hist, tr){
   // above it is a real strike, not its overtone. Recent frames tell which is which.
   const pf=targetOnsets._pf||(targetOnsets._pf=[]);
   const rising=L=>{ let lo=Infinity; for(const f of pf){ const v=f.get(L); if(v!=null && v<lo) lo=v; } return lo===Infinity || (fund.get(L)||0) > lo*RISE; };
+  // A higher note lands on a lower note's overtones (G4 is G3's 2nd and C3's 3rd),
+  // so a lower note counts only if its own fundamental rises too, and is not a
+  // negligible trace. In a very quiet room (Russell's) the background median is
+  // so low that a trace still cleared it: a key's hammer thump puts about 1% of
+  // the loudest note at the low pitches, while his softest real chord note (G2)
+  // measured 6%. The line sits at 3%.
+  let maxF=0; for(const v of fund.values()) if(v>maxF) maxF=v;
+  // a neighbouring key's level, unless it is just another target's overtone (F3's octave sits beside E4)
+  const spill=n=>targets.some(t=>[12,19,24].includes(n-t)) ? 0 : (fund.get(n)||0);
   const out=[];
   for(const m of targets){
     const a=fund.get(m), e=tot.get(m);
-    const st=hist.get(m)||{h:[],pend:false};
+    const st=hist.get(m)||{h:[],f:[],pend:false};
     const base=st.h.length ? Math.min(...st.h.slice(-6)) : Infinity;
-    st.h.push(e); if(st.h.length>10) st.h.shift(); hist.set(m,st);
-    const ok = e > base*RISE && a>medF*4 && e>medT*5 &&
-               a*2 >= Math.max(fund.get(m-1)||0, fund.get(m+1)||0) &&
+    const baseF=st.f.length ? Math.min(...st.f.slice(-6)) : Infinity;
+    st.h.push(e); if(st.h.length>10) st.h.shift();
+    st.f.push(a); if(st.f.length>10) st.f.shift(); hist.set(m,st);
+    const ok = e > base*RISE && a > baseF*RISE && a > maxF*0.03 && a>medF*4 && e>medT*5 &&
+               a*2 >= Math.max(spill(m-1), spill(m+1)) &&
                !isOvertone(m, a, fund, medF, rising);
     if(!ok){ st.pend=false; continue; }
-    if(!st.pend){ st.pend=true; st.h.pop(); continue; }   // keep the pre-attack low as the base
-    out.push(m); hist.set(m,{h:[],pend:false});           // the next strike must rise from here
+    if(!st.pend){ st.pend=true; st.h.pop(); st.f.pop(); continue; }   // keep the pre-attack low as the base
+    out.push(m); hist.set(m,{h:[],f:[],pend:false});           // the next strike must rise from here
   }
   pf.push(fund); if(pf.length>4) pf.shift();
   return out;
