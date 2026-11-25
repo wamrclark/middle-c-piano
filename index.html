@@ -2090,7 +2090,8 @@ function chordScoreMags(mags, binHz, cands, tr){
   const out=new Set(), lev=new Map();
   for(const m of cands){
     const a=fund.get(m), o=own(m); lev.set(m,o);
-    if(!(o>medT*4 && a>medF*1.5 && o>maxO*0.15)) continue;
+    // below middle C the fundamental can all but vanish (worst on an iPad mic), so a low note may count on its partials alone
+    if(!(o>medT*4 && (a>medF*1.5 || m<60) && o>maxO*0.15)) continue;
     // not a neighbour's spill (spill is far weaker than its source; a semitone
     // beside it can also hold a chord note's overtone, so only a big gap counts)
     if([m-1,m+1].some(n=>!cands.includes(n) && (fund.get(n)||0)>a*2)) continue;
@@ -2293,6 +2294,7 @@ function buildEvents(L, hands){
       const arr=Array.isArray(n.midi)?n.midi:[n.midi];
       for(const m of arr) if(!e.notes.includes(m)) e.notes.push(m);
       e.refs.push({hand, i});
+      if(hand==='lh') for(const m of arr) if(!(e.lh||(e.lh=[])).includes(m)) e.lh.push(m);
       e.dur=Math.min(e.dur, n.dur);
     }
   };
@@ -2471,8 +2473,15 @@ const Session = {
     const p = Input.chordPresence(ev.notes);
     if(!p) return;
     const found = new Set([...p, ...this.satisfied]);   // freshly sounding, or struck (onset)
-    // every note of the chord, up to 4; bigger chords may drop one
-    if(found.size >= (ev.notes.length>4 ? ev.notes.length-1 : ev.notes.length)){
+    // The melody (right hand) must all be heard. A left-hand chord may drop one
+    // note: low notes are the hardest for a mic to hear (an iPad mic barely
+    // picks up their fundamental), so demanding every one left chords stuck.
+    // One hand alone still fails: the other hand's notes are missing.
+    const lh=ev.lh||[], rh=ev.notes.filter(m=>!lh.includes(m));
+    const n=a=>a.filter(m=>found.has(m)).length;
+    const okR = n(rh) >= rh.length - (rh.length>4 ? 1 : 0);
+    const okL = n(lh) >= lh.length - (lh.length>=2 ? 1 : 0);
+    if(okR && okL){
       this.hits++; this.streak++; this.bestStreak=Math.max(this.bestStreak,this.streak);
       UI.markDone(this.idx); this.idx++; this.satisfied=new Set();
       if(this.idx>=this.L.events.length){ this.finish(); return; }
