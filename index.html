@@ -359,6 +359,14 @@ button{cursor:pointer;background:none;border:none;padding:0}
 .sheet h3{font-family:var(--font-display);font-size:var(--step-3);margin:0 0 6px;font-weight:500;letter-spacing:-.005em}
 .sheet p{color:var(--ink-2);line-height:1.55;margin:0 0 18px;max-width:60ch}
 .sheet p.small{font-size:var(--step--1);color:var(--ink-3);margin-bottom:0;margin-top:16px}
+.teach-sheet{max-width:880px}
+.teach-prompt{font-family:var(--font-display);font-size:30px;line-height:1.2;margin:4px 0 4px}
+.teach-status{min-height:24px;color:var(--ink-3);margin-bottom:12px}
+.teach-status.ok{color:var(--sage)}
+.teach-kbd{--kb-h:150px;border:1px solid var(--rule);border-radius:8px;margin-bottom:16px}
+.teach-h{font-size:15px;margin:22px 0 4px}
+.teach-rec{display:flex;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--rule)}
+.teach-rec span{flex:1;color:var(--ink-2)}
 
 .opt{
   display:flex;gap:13px;align-items:flex-start;width:100%;text-align:left;
@@ -641,11 +649,8 @@ button,.wk,.bk,.kbd,.hud,.rail-tabs,.lesson-item{-webkit-user-select:none;user-s
         <span class="hz" id="tunerHz">– Hz</span>
       </div>
       <p class="small">Play a few single notes on your piano. When the note name here matches what you played, it's hearing you correctly. If it stays blank, move closer or turn up the volume.</p>
-      <p class="small" id="teachMsg"><b>Teach it your piano.</b> About a minute: play each note it names, then three chords. It learns your piano's tuning and saves it on this device, and you can send the recording to Claude to fine-tune the listening.</p>
-      <p id="teachNow" style="font-size:22px;margin:6px 0" hidden></p>
-      <div class="row">
-        <button class="ctl" id="teachBtn">Teach it your piano</button>
-        <button class="ctl" id="teachSend" hidden>Send the recording to Claude</button>
+      <div class="row" style="margin-top:14px">
+        <button class="ctl" id="teachOpen">Teach it your piano</button>
       </div>
     </div>
     <div class="sound-row">
@@ -660,6 +665,24 @@ button,.wk,.bk,.kbd,.hud,.rail-tabs,.lesson-item{-webkit-user-select:none;user-s
       <button class="ctl primary" id="setupDone">Done</button>
       <button class="ctl" id="setupSkip">Use the on-screen keys</button>
     </div>
+  </div>
+</div>
+
+<div class="scrim" id="teachScrim" hidden>
+  <div class="sheet teach-sheet" role="dialog" aria-modal="true" aria-labelledby="teachTitle">
+    <h3 id="teachTitle">Teach it your piano</h3>
+    <p>Play each key that lights up, then three chords. Middle C learns how your piano sounds through this device, and keeps the recording here so you can export it.</p>
+    <div class="teach-prompt" id="teachNow">Tap Start when you're at the piano.</div>
+    <div class="teach-status" id="teachStatus"></div>
+    <div class="kbd teach-kbd"><div class="kbd-inner" id="teachKbd"></div></div>
+    <div class="row">
+      <button class="ctl primary" id="teachGo">Start</button>
+      <button class="ctl" id="teachBack" hidden>Back</button>
+      <button class="ctl" id="teachSkip" hidden>Skip this one</button>
+      <button class="ctl" id="teachClose">Close</button>
+    </div>
+    <h4 class="teach-h">Saved recordings</h4>
+    <div id="teachList"><p class="small">None yet.</p></div>
   </div>
 </div>
 
@@ -2048,26 +2071,49 @@ const Input = {
   tapOn(m){ this._on(m,.75); }, tapOff(m){ this._off(m); }
 };
 
-/* "Teach it your piano": one guided pass over the notes the songs use, then
-   three chords. Keeps the piano's tuning (and each note's overtone pattern)
-   on this device, and records the pass so it can be sent to Claude to tune
-   the listening against this piano and this mic. */
+/* Saved "Teach it your piano" recordings: kept in this browser's own
+   database (IndexedDB), never uploaded. */
+const RecDB = {
+  db(){
+    return this._p || (this._p = new Promise((ok,no)=>{
+      const r=indexedDB.open('middlec',1);
+      r.onupgradeneeded=()=>r.result.createObjectStore('recordings',{keyPath:'id',autoIncrement:true});
+      r.onsuccess=()=>ok(r.result); r.onerror=()=>no(r.error);
+    }));
+  },
+  async run(mode, fn){
+    const d=await this.db();
+    return new Promise((ok,no)=>{ const t=d.transaction('recordings',mode), r=fn(t.objectStore('recordings')); t.oncomplete=()=>ok(r.result); t.onerror=()=>no(t.error); });
+  },
+  add(rec){ return this.run('readwrite', s=>s.add(rec)); },
+  all(){ return this.run('readonly', s=>s.getAll()); },
+  del(id){ return this.run('readwrite', s=>s.delete(id)); }
+};
+
+/* "Teach it your piano": its own screen. Lights each key on a keyboard,
+   waits for it (no auto-skip: Back and Skip are the person's call), then
+   three chords. Keeps the piano's tuning and each note's overtone pattern
+   on this device, and saves the recording of the pass for export. */
 const Teach = {
   KEY:'middlec-piano',
   NOTES:[43,45,47,48,50,52,53,55,57,59,60,62,64,65,67,69,71,72],
   CHORDS:[[48,52,55,64],[48,53,57,60],[43,47,50,64]],
-  cur:null, on:false, files:null,
+  on:false, idx:0, move:0,
   load(){ try{ return JSON.parse(localStorage.getItem(this.KEY)||'null'); }catch(e){ return null; } },
-  /* the strike's spectrum: each partial's peak (1st to 6th), and how far the
-     fundamental sits from true pitch, in cents */
+  steps(){ return [...this.NOTES.map(m=>[m]), ...this.CHORDS]; },
+  /* the strike's spectrum: each partial's peak (1st to 6th), how far the
+     fundamental sits from true pitch (cents), and whether the lit key, not a
+     neighbour, is what sounded */
   capture(m){
     const {an2,freq2,ctx}=Input._mic; an2.getFloatFrequencyData(freq2);
     const binHz=ctx.sampleRate/an2.fftSize, mags=new Float32Array(freq2.length);
     for(let i=0;i<mags.length;i++) mags[i]=Math.pow(10,freq2[i]/20);
     const f=midiToFreq(m), peak=fc=>{ const lo=Math.floor(fc*0.981/binHz), hi=Math.ceil(fc*1.019/binHz); let b=lo; for(let k=lo;k<=hi;k++) if(mags[k]>mags[b]) b=k; return b; };
     const parts=[1,2,3,4,5,6].map(k=>mags[peak(k*f)]);
-    const {medF}=noteEnergies(mags, binHz, m-24, m+30, 1), top=Math.max(...parts);
-    if(!(top>medF*6)) return null;
+    const {tot,medF}=noteEnergies(mags, binHz, m-24, m+30, 1), top=Math.max(...parts);
+    if(!(top>medF*6)) return {faint:true};
+    const t=tot.get(m);
+    if([m-2,m-1,m+1,m+2].some(n=>(tot.get(n)||0)>t*1.2)) return {wrong:true};
     let cents=null;
     const b=peak(f);
     if(m>=55 && parts[0]>medF*10 && b>0){   // parabolic fit of the fundamental's peak
@@ -2077,51 +2123,64 @@ const Teach = {
     return {parts:parts.map(p=>+(p/top).toFixed(3)), cents};
   },
   async run(ui){
-    if(this.on){ this.stopNow=true; return; }
-    const mic=Input._mic; if(!mic) return;
+    if(!Input._mic){
+      const ok=await Input.startMic(); ui.setInput(ok?'mic':Input.mode);
+      if(!ok){ ui.teachStatus('The microphone is not available. Allow it for this site, then tap Start again.'); return; }
+    }
+    if(Input.paused){ await Input.resumeMic(); ui.refreshInputPill(); }
     if(Session.running) Session.stop();
-    this.on=true; this.stopNow=false; this.files=null;
+    const mic=Input._mic;
+    this.on=true; this.idx=0; this.move=0;
     const sleep=ms=>new Promise(r=>setTimeout(r,ms));
     const type=['audio/mp4','audio/webm'].find(t=>window.MediaRecorder && MediaRecorder.isTypeSupported(t));
     const chunks=[], rec=type ? new MediaRecorder(mic.stream,{mimeType:type}) : null;
     if(rec){ rec.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); }; rec.start(1000); }
-    const t0=performance.now(), log=[], prof={}, cents=[];
-    const steps=[...this.NOTES.map(m=>[m]), ...this.CHORDS];
-    for(let i=0;i<steps.length && !this.stopNow;i++){
-      const notes=steps[i];
-      for(let tries=0;tries<3 && !this.stopNow;tries++){
-        this.cur=notes; ui.teachPrompt(notes, i+1, steps.length, tries>0);
-        const asked=performance.now();
-        // the lesson screen resets what the mic listens for, so keep setting it
-        while(!this.stopNow && !(Input.lastStrike>asked+150) && performance.now()-asked<6000){ Input.targetNotes=notes; Input.suppressMono=notes.length>1; await sleep(40); }
-        if(this.stopNow || !(Input.lastStrike>asked+150)) break;   // nothing heard in 6 s: move on
-        const hitAt=Input.lastStrike; await sleep(300);
-        log.push({notes, t:Math.round(hitAt-t0)});
-        if(notes.length>1){ await sleep(900); break; }
+    const t0=performance.now(), log=[], prof={}, cents={}, steps=this.steps();
+    while(this.on && this.idx<steps.length){
+      const notes=steps[this.idx];
+      ui.teachPrompt(notes, this.idx+1, steps.length);
+      this.move=0;
+      let seen=performance.now()+150, got=false;
+      while(this.on && !this.move && !got){
+        Input.targetNotes=notes; Input.suppressMono=notes.length>1;   // the lesson screen resets these
+        await sleep(40);
+        if(!(Input.lastStrike>seen)) continue;
+        const hitAt=seen=Input.lastStrike; await sleep(300);
+        if(!this.on || this.move) break;
+        if(notes.length>1){ log.push({notes, t:Math.round(hitAt-t0)}); got=true; break; }
         const p=this.capture(notes[0]);
-        if(p){ prof[notes[0]]=p.parts; if(p.cents!=null) cents.push(p.cents); await sleep(500); break; }
+        log.push({notes, t:Math.round(hitAt-t0), ok:!!p.parts});
+        if(p.parts){ prof[notes[0]]=p.parts; if(p.cents!=null) cents[notes[0]]=p.cents; else delete cents[notes[0]]; got=true; }
+        else ui.teachStatus(p.wrong ? 'That sounded like a different key. Try the lit one, or tap Skip.' : 'Too quiet to hear clearly. Play it a little harder, or tap Skip.');
       }
+      if(got){ ui.teachHeard(notes); await sleep(notes.length>1 ? 1200 : 700); this.idx++; continue; }
+      if(this.move) this.idx=Math.max(0, this.idx+this.move);
     }
-    this.cur=null; this.on=false;
+    const finished=this.on; this.on=false;
     if(rec){ await new Promise(r=>{ rec.onstop=r; rec.stop(); }); }
     const done=Object.keys(prof).length;
     let tune=null;
-    if(cents.length>=3){ const v=cents.sort((a,b)=>a-b); tune=Math.max(-45,Math.min(45,Math.round(v[v.length>>1]))); Input.tuneCents=tune; Input._tuneHist=[]; }
+    const cv=Object.values(cents).sort((a,b)=>a-b);
+    if(cv.length>=3){ tune=Math.max(-45,Math.min(45,Math.round(cv[cv.length>>1]))); Input.tuneCents=tune; Input._tuneHist=[]; }
     if(done){ try{ localStorage.setItem(this.KEY, JSON.stringify({v:1, at:new Date().toISOString(), tuneCents:tune, notes:prof})); }catch(e){} }
-    const day=new Date().toISOString().slice(0,10), ext=(type||'').includes('mp4')?'m4a':'webm';
-    const info={app:'Middle C', at:new Date().toISOString(), sampleRate:mic.ctx.sampleRate, tuneCents:tune, steps:log, profile:prof, ua:navigator.userAgent};
-    this.files=[...(chunks.length?[new File(chunks,`middle-c-piano-${day}.${ext}`,{type})]:[]),
-                new File([JSON.stringify(info)],`middle-c-piano-${day}.json`,{type:'application/json'})];
-    ui.teachDone(done, steps.length-this.CHORDS.length, tune, !!chunks.length);
+    if(done && chunks.length){
+      const info={app:'Middle C', at:new Date().toISOString(), sampleRate:mic.ctx.sampleRate, tuneCents:tune, steps:log, profile:prof, ua:navigator.userAgent};
+      try{ await RecDB.add({at:Date.now(), type, audio:new Blob(chunks,{type}), info, heard:done, of:this.NOTES.length, secs:Math.round((performance.now()-t0)/1000)}); }catch(e){}
+    }
+    ui.teachDone(done, this.NOTES.length, tune, finished);
     ui.updateHud();
   },
-  /* the share sheet (Telegram, Mail, AirDrop...); a download where there is none */
-  async send(){
-    const files=this.files; if(!files) return;
-    if(navigator.canShare && navigator.canShare({files})){
-      try{ await navigator.share({files, title:'Middle C piano recording'}); }catch(e){}
-      return;
-    }
+  /* a saved recording as files: the audio plus a small data file of what
+     was asked and when it was heard */
+  files(r){
+    const d=new Date(r.at), stamp=d.toISOString().slice(0,16).replace(/[-:]/g,'').replace('T','-');
+    const ext=(r.type||'').includes('mp4')?'m4a':'webm';
+    return [new File([r.audio],`middle-c-piano-${stamp}.${ext}`,{type:r.type}),
+            new File([JSON.stringify(r.info)],`middle-c-piano-${stamp}.json`,{type:'application/json'})];
+  },
+  /* the share sheet (Save to Files, AirDrop, Telegram...); a download where there is none */
+  export(files){
+    if(navigator.canShare && navigator.canShare({files})){ navigator.share({files, title:'Middle C piano recording'}).catch(()=>{}); return; }
     for(const f of files){ const a=document.createElement('a'); a.href=URL.createObjectURL(f); a.download=f.name; a.click(); }
   }
 };
@@ -2966,8 +3025,11 @@ const UI = {
       else this.openSetup();
     };
     this.$('setupDone').onclick = ()=>this.closeSetup();
-    this.$('teachBtn').onclick = ()=>Teach.run(this);
-    this.$('teachSend').onclick = ()=>Teach.send();
+    this.$('teachOpen').onclick = ()=>this.openTeach();
+    this.$('teachGo').onclick = ()=>{ if(Teach.on) Teach.on=false; else Teach.run(this); };
+    this.$('teachBack').onclick = ()=>{ Teach.move=-1; };
+    this.$('teachSkip').onclick = ()=>{ Teach.move=1; };
+    this.$('teachClose').onclick = ()=>this.closeTeach();
     this.$('soundTest').onclick = ()=>{
       Audio_.unlock();
       // a small rising figure: unmistakable if it comes through
@@ -3092,24 +3154,73 @@ const UI = {
     this.paintSoundState();
     this.$('setupScrim').hidden=false;
   },
-  closeSetup(){ if(Teach.on) Teach.stopNow=true; this.$('setupScrim').hidden=true; },
+  closeSetup(){ this.$('setupScrim').hidden=true; },
 
-  teachPrompt(notes, i, n, again){
-    const el=this.$('teachNow'); el.hidden=false; el.style.fontSize='22px';
-    const nm=notes.map(m=>noteName(m)+(m===60?' (middle C)':'')).join(' + ');
-    el.textContent=(again?'Didn’t catch that. Again: ':notes.length>1?'Together: ':'Play ')+nm+'   · '+i+' of '+n;
-    if(i===1) this.$('teachBtn').scrollIntoView({block:'end', behavior:'smooth'});
-    this.$('teachBtn').textContent='Stop';
-    this.$('teachSend').hidden=true;
+  /* ---------- teach it your piano ---------- */
+  openTeach(){
+    this.closeSetup(); this.closeRail();
+    this.$('teachScrim').hidden=false;
+    this.teachKeyboard();
+    if(!Teach.on){ this.$('teachNow').textContent='Tap Start when you’re at the piano.'; this.teachStatus(''); }
+    this.teachList();
   },
-  teachDone(done, total, tune, audio){
-    const el=this.$('teachNow'); el.style.fontSize='16px';
-    el.textContent = done
-      ? 'Done. Heard '+done+' of '+total+' notes'+(tune!=null?'; your piano sits '+(tune>0?'+':'')+tune+' cents from standard pitch':'')+'. Saved on this device.'
-      : 'Stopped. Nothing saved.';
-    this.$('teachBtn').textContent = done ? 'Teach it again' : 'Teach it your piano';
-    this.$('teachSend').hidden = !done;
-    this.$('teachBtn').scrollIntoView({block:'end', behavior:'smooth'});
+  closeTeach(){ Teach.on=false; this.$('teachScrim').hidden=true; },
+  /* the same keys as the lesson keyboard, C2 to F5, display only */
+  teachKeyboard(){
+    const inner=this.$('teachKbd'), lo=36, hi=77, whites=[];
+    for(let m=lo;m<=hi;m++) if([0,2,4,5,7,9,11].includes(m%12)) whites.push(m);
+    const wW=Math.max(26, Math.floor((inner.parentNode.clientWidth||700)/whites.length)), at=new Map();
+    const L={0:'C',2:'D',4:'E',5:'F',7:'G',9:'A',11:'B'};
+    let html='';
+    whites.forEach((m,i)=>{ at.set(m,i);
+      html+=`<div class="wk${m%12===0?' c-mark':''}" data-m="${m}" style="left:${i*wW}px;width:${wW}px"><span class="kb-oct">${m%12===0?noteName(m):''}</span><span class="kb-letter">${m%12===0?'':L[m%12]}</span></div>`; });
+    for(let m=lo;m<=hi;m++){
+      if(![1,3,6,8,10].includes(m%12)) continue;
+      const bw=Math.round(wW*0.62);
+      html+=`<div class="bk" data-m="${m}" style="left:${at.get(m-1)*wW+wW-bw/2}px;width:${bw}px"></div>`;
+    }
+    inner.style.width=wW*whites.length+'px'; inner.innerHTML=html;
+  },
+  teachKeys(notes, cls){
+    const inner=this.$('teachKbd');
+    inner.querySelectorAll('.target,.down').forEach(e=>e.classList.remove('target','down'));
+    for(const m of notes){ const k=inner.querySelector(`[data-m="${m}"]`); if(k) k.classList.add(cls); }
+  },
+  teachPrompt(notes, i, n){
+    this.$('teachNow').textContent = notes.length>1
+      ? 'Play the '+notes.length+' lit keys together'
+      : 'Play '+noteName(notes[0])+(notes[0]===60?', middle C':notes[0]<60?', left of middle C':', right of middle C');
+    this.teachStatus('Step '+i+' of '+n+'. Listening…');
+    this.teachKeys(notes,'target');
+    this.$('teachGo').textContent='Stop';
+    this.$('teachBack').hidden=i===1; this.$('teachSkip').hidden=false;
+  },
+  teachStatus(t, ok){ const el=this.$('teachStatus'); el.textContent=t; el.classList.toggle('ok', !!ok); },
+  teachHeard(notes){ this.teachKeys(notes,'down'); this.teachStatus('Got it.', true); },
+  teachDone(done, total, tune, finished){
+    this.teachKeys([], 'target');
+    this.$('teachNow').textContent = done ? (finished?'All done.':'Stopped.') : 'Stopped. Nothing saved.';
+    this.teachStatus(done ? 'Heard '+done+' of '+total+' notes'+(tune!=null?'. Your piano sits '+(tune>0?'+':'')+tune+' cents from standard pitch':'')+'. Saved below.' : '', !!done);
+    this.$('teachGo').textContent = done ? 'Start again' : 'Start';
+    this.$('teachBack').hidden=this.$('teachSkip').hidden=true;
+    this.teachList();
+  },
+  /* saved recordings, newest first, each ready to export from a single tap */
+  async teachList(){
+    const box=this.$('teachList');
+    let recs=[]; try{ recs=(await RecDB.all()).reverse(); }catch(e){}
+    if(!recs.length){ box.innerHTML='<p class="small">None yet.</p>'; return; }
+    box.innerHTML='';
+    for(const r of recs){
+      const row=document.createElement('div'); row.className='teach-rec';
+      const d=new Date(r.at);
+      row.innerHTML=`<span>${d.toLocaleDateString(undefined,{month:'short',day:'numeric'})}, ${d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})} · ${r.heard} of ${r.of} notes · ${r.secs} s</span>`;
+      const files=Teach.files(r);   // built now, so Export can open the share sheet straight from the tap
+      const ex=document.createElement('button'); ex.className='ctl'; ex.textContent='Export'; ex.onclick=()=>Teach.export(files);
+      const del=document.createElement('button'); del.className='ctl'; del.textContent='Delete';
+      del.onclick=async()=>{ if(del.dataset.sure){ await RecDB.del(r.id); this.teachList(); } else { del.dataset.sure='1'; del.textContent='Tap again to delete'; } };
+      row.append(ex, del); box.appendChild(row);
+    }
   },
 
   /* A page embedded in another site gets the SAME error when the host blocks
@@ -3195,6 +3306,11 @@ const UI = {
         '<span><span class="li-title">Add a song</span><span class="li-meta">Open a MusicXML or MIDI file</span></span>';
       add.onclick=()=>this.$('songFile').click();
       list.appendChild(add);
+      const tp=document.createElement('button'); tp.className='add-song';
+      tp.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>'+
+        '<span><span class="li-title">Teach it your piano</span><span class="li-meta">Helps the microphone hear your piano</span></span>';
+      tp.onclick=()=>this.openTeach();
+      list.appendChild(tp);
       if(this.hasPrivate && !PrivateSongs.code()){
         const cb=document.createElement('button'); cb.className='rail-link'; cb.textContent='Have a song code? Enter it';
         cb.onclick=()=>{ const c=prompt('Your song code'); if(c && c.trim()){ PrivateSongs.setCode(c); this.buildRail(); this.syncPrivate(); } };
