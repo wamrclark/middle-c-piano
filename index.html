@@ -641,6 +641,12 @@ button,.wk,.bk,.kbd,.hud,.rail-tabs,.lesson-item{-webkit-user-select:none;user-s
         <span class="hz" id="tunerHz">– Hz</span>
       </div>
       <p class="small">Play a few single notes on your piano. When the note name here matches what you played, it's hearing you correctly. If it stays blank, move closer or turn up the volume.</p>
+      <p class="small" id="teachMsg"><b>Teach it your piano.</b> About a minute: play each note it names, then three chords. It learns your piano's tuning and saves it on this device, and you can send the recording to Claude to fine-tune the listening.</p>
+      <p id="teachNow" style="font-size:22px;margin:6px 0" hidden></p>
+      <div class="row">
+        <button class="ctl" id="teachBtn">Teach it your piano</button>
+        <button class="ctl" id="teachSend" hidden>Send the recording to Claude</button>
+      </div>
     </div>
     <div class="sound-row">
       <button class="ctl" id="soundTest">
@@ -2042,6 +2048,85 @@ const Input = {
   tapOn(m){ this._on(m,.75); }, tapOff(m){ this._off(m); }
 };
 
+/* "Teach it your piano": one guided pass over the notes the songs use, then
+   three chords. Keeps the piano's tuning (and each note's overtone pattern)
+   on this device, and records the pass so it can be sent to Claude to tune
+   the listening against this piano and this mic. */
+const Teach = {
+  KEY:'middlec-piano',
+  NOTES:[43,45,47,48,50,52,53,55,57,59,60,62,64,65,67,69,71,72],
+  CHORDS:[[48,52,55,64],[48,53,57,60],[43,47,50,64]],
+  cur:null, on:false, files:null,
+  load(){ try{ return JSON.parse(localStorage.getItem(this.KEY)||'null'); }catch(e){ return null; } },
+  /* the strike's spectrum: each partial's peak (1st to 6th), and how far the
+     fundamental sits from true pitch, in cents */
+  capture(m){
+    const {an2,freq2,ctx}=Input._mic; an2.getFloatFrequencyData(freq2);
+    const binHz=ctx.sampleRate/an2.fftSize, mags=new Float32Array(freq2.length);
+    for(let i=0;i<mags.length;i++) mags[i]=Math.pow(10,freq2[i]/20);
+    const f=midiToFreq(m), peak=fc=>{ const lo=Math.floor(fc*0.981/binHz), hi=Math.ceil(fc*1.019/binHz); let b=lo; for(let k=lo;k<=hi;k++) if(mags[k]>mags[b]) b=k; return b; };
+    const parts=[1,2,3,4,5,6].map(k=>mags[peak(k*f)]);
+    const {medF}=noteEnergies(mags, binHz, m-24, m+30, 1), top=Math.max(...parts);
+    if(!(top>medF*6)) return null;
+    let cents=null;
+    const b=peak(f);
+    if(m>=55 && parts[0]>medF*10 && b>0){   // parabolic fit of the fundamental's peak
+      const [y0,y1,y2]=[freq2[b-1],freq2[b],freq2[b+1]], d=(y0-y2)/(2*(y0-2*y1+y2)||1);
+      cents=1200*Math.log2((b+d)*binHz/f);
+    }
+    return {parts:parts.map(p=>+(p/top).toFixed(3)), cents};
+  },
+  async run(ui){
+    if(this.on){ this.stopNow=true; return; }
+    const mic=Input._mic; if(!mic) return;
+    if(Session.running) Session.stop();
+    this.on=true; this.stopNow=false; this.files=null;
+    const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+    const type=['audio/mp4','audio/webm'].find(t=>window.MediaRecorder && MediaRecorder.isTypeSupported(t));
+    const chunks=[], rec=type ? new MediaRecorder(mic.stream,{mimeType:type}) : null;
+    if(rec){ rec.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); }; rec.start(1000); }
+    const t0=performance.now(), log=[], prof={}, cents=[];
+    const steps=[...this.NOTES.map(m=>[m]), ...this.CHORDS];
+    for(let i=0;i<steps.length && !this.stopNow;i++){
+      const notes=steps[i];
+      for(let tries=0;tries<3 && !this.stopNow;tries++){
+        this.cur=notes; ui.teachPrompt(notes, i+1, steps.length, tries>0);
+        const asked=performance.now();
+        // the lesson screen resets what the mic listens for, so keep setting it
+        while(!this.stopNow && !(Input.lastStrike>asked+150) && performance.now()-asked<6000){ Input.targetNotes=notes; Input.suppressMono=notes.length>1; await sleep(40); }
+        if(this.stopNow || !(Input.lastStrike>asked+150)) break;   // nothing heard in 6 s: move on
+        const hitAt=Input.lastStrike; await sleep(300);
+        log.push({notes, t:Math.round(hitAt-t0)});
+        if(notes.length>1){ await sleep(900); break; }
+        const p=this.capture(notes[0]);
+        if(p){ prof[notes[0]]=p.parts; if(p.cents!=null) cents.push(p.cents); await sleep(500); break; }
+      }
+    }
+    this.cur=null; this.on=false;
+    if(rec){ await new Promise(r=>{ rec.onstop=r; rec.stop(); }); }
+    const done=Object.keys(prof).length;
+    let tune=null;
+    if(cents.length>=3){ const v=cents.sort((a,b)=>a-b); tune=Math.max(-45,Math.min(45,Math.round(v[v.length>>1]))); Input.tuneCents=tune; Input._tuneHist=[]; }
+    if(done){ try{ localStorage.setItem(this.KEY, JSON.stringify({v:1, at:new Date().toISOString(), tuneCents:tune, notes:prof})); }catch(e){} }
+    const day=new Date().toISOString().slice(0,10), ext=(type||'').includes('mp4')?'m4a':'webm';
+    const info={app:'Middle C', at:new Date().toISOString(), sampleRate:mic.ctx.sampleRate, tuneCents:tune, steps:log, profile:prof, ua:navigator.userAgent};
+    this.files=[...(chunks.length?[new File(chunks,`middle-c-piano-${day}.${ext}`,{type})]:[]),
+                new File([JSON.stringify(info)],`middle-c-piano-${day}.json`,{type:'application/json'})];
+    ui.teachDone(done, steps.length-this.CHORDS.length, tune, !!chunks.length);
+    ui.updateHud();
+  },
+  /* the share sheet (Telegram, Mail, AirDrop...); a download where there is none */
+  async send(){
+    const files=this.files; if(!files) return;
+    if(navigator.canShare && navigator.canShare({files})){
+      try{ await navigator.share({files, title:'Middle C piano recording'}); }catch(e){}
+      return;
+    }
+    for(const f of files){ const a=document.createElement('a'); a.href=URL.createObjectURL(f); a.download=f.name; a.click(); }
+  }
+};
+{ const p=Teach.load(); if(p && p.tuneCents!=null) Input.tuneCents=p.tuneCents; }
+
 /* Which of the candidate pitches are sounding right now? Reads the long-window
    spectrum, scores each candidate by its fundamental plus its 2nd and 3rd
    harmonics, and compares that to the typical level across every semitone. */
@@ -2881,6 +2966,8 @@ const UI = {
       else this.openSetup();
     };
     this.$('setupDone').onclick = ()=>this.closeSetup();
+    this.$('teachBtn').onclick = ()=>Teach.run(this);
+    this.$('teachSend').onclick = ()=>Teach.send();
     this.$('soundTest').onclick = ()=>{
       Audio_.unlock();
       // a small rising figure: unmistakable if it comes through
@@ -3005,7 +3092,25 @@ const UI = {
     this.paintSoundState();
     this.$('setupScrim').hidden=false;
   },
-  closeSetup(){ this.$('setupScrim').hidden=true; },
+  closeSetup(){ if(Teach.on) Teach.stopNow=true; this.$('setupScrim').hidden=true; },
+
+  teachPrompt(notes, i, n, again){
+    const el=this.$('teachNow'); el.hidden=false; el.style.fontSize='22px';
+    const nm=notes.map(m=>noteName(m)+(m===60?' (middle C)':'')).join(' + ');
+    el.textContent=(again?'Didn’t catch that. Again: ':notes.length>1?'Together: ':'Play ')+nm+'   · '+i+' of '+n;
+    if(i===1) this.$('teachBtn').scrollIntoView({block:'end', behavior:'smooth'});
+    this.$('teachBtn').textContent='Stop';
+    this.$('teachSend').hidden=true;
+  },
+  teachDone(done, total, tune, audio){
+    const el=this.$('teachNow'); el.style.fontSize='16px';
+    el.textContent = done
+      ? 'Done. Heard '+done+' of '+total+' notes'+(tune!=null?'; your piano sits '+(tune>0?'+':'')+tune+' cents from standard pitch':'')+'. Saved on this device.'
+      : 'Stopped. Nothing saved.';
+    this.$('teachBtn').textContent = done ? 'Teach it again' : 'Teach it your piano';
+    this.$('teachSend').hidden = !done;
+    this.$('teachBtn').scrollIntoView({block:'end', behavior:'smooth'});
+  },
 
   /* A page embedded in another site gets the SAME error when the host blocks
      the microphone as when the person declines it. Say which, so the fix is
