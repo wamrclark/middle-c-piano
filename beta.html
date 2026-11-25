@@ -1,14 +1,14 @@
 <!doctype html><html><head>
-<meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Middle C"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1D1712" media="(prefers-color-scheme: dark)"><link rel="apple-touch-icon" href="apple-touch-icon.png"><link rel="manifest" href="manifest.json"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
 
 <title>Middle C</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400;6..96,500;6..96,700&family=Libre+Franklin:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,500;0,6..96,700;1,6..96,400;1,6..96,500&family=Libre+Franklin:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 
 <style>
 /* ============================================================
-   MIDDLE C — tokens
+   MIDDLE C: tokens
    Palette drawn from the instrument itself: ebony case, brass
    hardware, ivory keys, the red felt under the lid.
    ============================================================ */
@@ -333,7 +333,7 @@ button{cursor:pointer;background:none;border:none;padding:0}
   font-family:var(--font-mono);font-weight:700;font-size:10px;
   opacity:.85;letter-spacing:.02em;line-height:1;
 }
-/* column flow flips what these two control — align is now horizontal */
+/* column flow flips what these two control: align is now horizontal */
 .wk{flex-direction:column;align-items:center;justify-content:flex-end;gap:2px}
 .bk{flex-direction:column;align-items:center;justify-content:flex-end;gap:2px}
 .wk .kb-oct{font-size:11px;opacity:.85;line-height:1;font-weight:700}
@@ -463,6 +463,52 @@ button{cursor:pointer;background:none;border:none;padding:0}
   .heard .cents{display:none}
   .heard .note{min-width:0}
 }
+/* ============================================================
+   POLISH: native iPad feel, readable sizes, quiet labels
+   ============================================================ */
+:root{ --step--1:0.8125rem; }            /* nothing smaller than 13px */
+/* a home-screen app sizes its viewport short if the body is overflow:hidden */
+body{overflow:visible}
+html,body{height:100%;overscroll-behavior:none}
+.kbd{padding-bottom:env(safe-area-inset-bottom)}
+.topbar{padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
+
+/* touch: no grey flash, no double-tap zoom, no text selection on controls */
+button,.wk,.bk,.lesson-item,.opt,.pill,a{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+button,.wk,.bk,.kbd,.hud,.rail-tabs,.lesson-item{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+::selection{background:var(--brass-wash)}
+
+/* labels: sentence case, no shouting capitals. Section names engraved in italic */
+.brand .sub,.group-label,.hud-cell .k,.tempo label{text-transform:none;letter-spacing:0}
+.brand .sub{font-family:var(--font-display);font-style:italic;font-size:var(--step-1);color:var(--ink-2)}
+.group-label{font-family:var(--font-display);font-style:italic;font-weight:500;font-size:var(--step-1);color:var(--ink-2);padding:16px 10px 6px}
+.hud-cell .k{font-weight:500;color:var(--ink-2)}
+.tempo label{font-weight:500;color:var(--ink-2)}
+.rail-tabs button{font-size:var(--step-0);letter-spacing:0}
+
+/* one word beside the icon */
+.icon-btn.labeled{width:auto;padding:0 12px 0 10px;gap:7px;font-size:var(--step--1);font-weight:600}
+
+/* pressed state: a small, quick give, like a key going down */
+.ctl,.pill,.icon-btn,.seg button,.opt,.lesson-item{transition:background .15s,border-color .15s,color .15s,transform .12s cubic-bezier(.25,.1,.25,1)}
+.ctl:active,.pill:active,.icon-btn:active,.opt:active{transform:scale(.97)}
+.lesson-item:active{background:var(--surface-2)}
+
+/* finish sheet stars */
+.finish-stars{display:flex;justify-content:center;gap:10px}
+.finish-stars svg{width:30px;height:30px;fill:none;stroke:var(--brass);stroke-width:1.4;stroke-linejoin:round}
+.finish-stars svg.on{fill:var(--brass-bright);stroke:var(--brass)}
+
+/* fingers on glass: 44px targets */
+@media (pointer:coarse){
+  .ctl,.seg button,.icon-btn,.pill{min-height:44px}
+  .icon-btn{min-width:44px}
+  .tempo{min-height:44px}
+  .tempo input[type=range]{width:120px}
+  .rail-tabs button{min-height:46px}
+  .lesson-item{padding:11px 12px}
+}
+@media (prefers-reduced-motion: reduce){ .ctl:active,.pill:active,.icon-btn:active,.opt:active{transform:none} }
 </style>
 
 <div class="escape" id="escape" hidden>
@@ -483,13 +529,10 @@ button{cursor:pointer;background:none;border:none;padding:0}
       <h1>Middle C</h1>
       <span class="sub">Piano practice</span>
     </div>
-    <button class="pill" id="inputPill" title="Set up input"><span class="dot"></span><span id="inputLabel">Set up input</span></button>
-    <button class="icon-btn" id="inputSettingsBtn" aria-label="Change input method" title="Change input method">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    </button>
-    <button class="icon-btn" id="noteNamesBtn" aria-label="Toggle note-name labels" aria-pressed="true" title="Show the letter name on every note">
+    <button class="pill" id="inputPill" title="How you play: microphone, USB piano, or on-screen keys"><span class="dot"></span><span id="inputLabel">Set up input</span></button>
+    <button class="icon-btn labeled" id="noteNamesBtn" aria-label="Toggle note-name labels" aria-pressed="true" title="Show the letter name on every note">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="17" r="3.2"/><circle cx="17" cy="15" r="3.2"/><path d="M11.2 17V5.8L20.2 4v11.5"/></svg>
-    </button>
+    <span>Note names</span></button>
     <button class="icon-btn" id="themeBtn" aria-label="Toggle light and dark">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
     </button>
@@ -545,18 +588,18 @@ button{cursor:pointer;background:none;border:none;padding:0}
       <div class="hud">
         <div class="hud-cell target">
           <span class="k">Play</span>
-          <span class="v" id="hudTarget">—</span>
+          <span class="v" id="hudTarget">–</span>
         </div>
         <div class="hud-cell">
           <span class="k">Heard</span>
           <div class="heard">
-            <span class="note" id="hudHeard">—</span>
+            <span class="note" id="hudHeard">–</span>
             <span class="cents"><i id="hudCents"></i></span>
           </div>
         </div>
         <div class="hud-cell hide-sm">
           <span class="k">Accuracy</span>
-          <span class="v" id="hudAcc">—</span>
+          <span class="v" id="hudAcc">–</span>
         </div>
         <div class="hud-cell hide-sm">
           <span class="k">Streak</span>
@@ -577,14 +620,14 @@ button{cursor:pointer;background:none;border:none;padding:0}
 <div class="scrim" id="setupScrim" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
     <h3 id="setupTitle">How are you playing?</h3>
-    <p>Middle C listens for the notes you play so it can tell whether you got them right. Pick whichever fits your instrument — you can change this any time.</p>
+    <p>Middle C listens for the notes you play so it can tell whether you got them right. Pick whichever fits your instrument. You can change this any time.</p>
     <div id="setupOpts"></div>
     <div id="micPanel" hidden>
       <div id="micMsg" hidden></div>
       <div class="tuner">
-        <span class="big" id="tunerNote">—</span>
+        <span class="big" id="tunerNote">–</span>
         <span class="lvl"><i id="tunerLvl"></i></span>
-        <span class="hz" id="tunerHz">— Hz</span>
+        <span class="hz" id="tunerHz">– Hz</span>
       </div>
       <p class="small">Play a few single notes on your piano. When the note name here matches what you played, it's hearing you correctly. If it stays blank, move closer or turn up the volume.</p>
     </div>
@@ -595,7 +638,7 @@ button{cursor:pointer;background:none;border:none;padding:0}
       </button>
       <span class="sound-state" id="soundState">Sound not started yet</span>
     </div>
-    <p class="small" id="soundHint">If you hear nothing on an iPad, check the side switch isn't set to silent and turn the volume up — Safari plays this through the ringer channel.</p>
+    <p class="small" id="soundHint">If you hear nothing on an iPad, check the side switch isn't set to silent and turn the volume up. Safari plays this through the ringer channel.</p>
     <div class="row">
       <button class="ctl primary" id="setupDone">Done</button>
       <button class="ctl" id="setupSkip">Use the on-screen keys</button>
@@ -616,7 +659,7 @@ button{cursor:pointer;background:none;border:none;padding:0}
         <span class="od" id="finishNextByline"></span>
       </span>
     </button>
-    <p class="small" id="finishAllDone" hidden>That's every tune in this list — pick another from the songbook whenever you're ready.</p>
+    <p class="small" id="finishAllDone" hidden>That's every tune in this list. Pick another from the songbook whenever you're ready.</p>
     <div class="row">
       <button class="ctl" id="finishAgain">Practice this again</button>
       <button class="ctl" id="finishClose">Choose another</button>
@@ -665,7 +708,7 @@ const SONGS = [
   {
     id:'twinkle', title:'Twinkle, Twinkle, Little Star', composer:'Traditional',
     level:1, keySig:'C', ts:[4,4], bpm:92, hands:'rh',
-    note:'Your first tune that leaves the five-finger box — the hand shifts up to A.',
+    note:'Your first tune that leaves the five-finger box: the hand shifts up to A.',
     rh:[[60,1,1],[60,1,1],[67,1,5],[67,1,5], [69,1,5],[69,1,5],[67,2,5],
         [65,1,4],[65,1,4],[64,1,3],[64,1,3], [62,1,2],[62,1,2],[60,2,1],
         [67,1,5],[67,1,5],[65,1,4],[65,1,4], [64,1,3],[64,1,3],[62,2,2],
@@ -685,7 +728,7 @@ const SONGS = [
   {
     id:'jingle-bells', title:'Jingle Bells', composer:'James Pierpont',
     level:1, keySig:'C', ts:[4,4], bpm:112, hands:'rh',
-    note:'Quick and repetitive — good for building an even, steady pulse.',
+    note:'Quick and repetitive: good for building an even, steady pulse.',
     rh:[[64,1,3],[64,1,3],[64,2,3], [64,1,3],[64,1,3],[64,2,3],
         [64,1,3],[67,1,5],[60,1,1],[62,1,2], [64,4,3],
         [65,1,4],[65,1,4],[65,1,4],[65,1,4], [65,1,4],[64,1,3],[64,1,3],[64,.5,3],[64,.5,3],
@@ -705,7 +748,7 @@ const SONGS = [
   {
     id:'saints', title:'When the Saints Go Marching In', composer:'Traditional',
     level:2, keySig:'C', ts:[4,4], bpm:104, hands:'grand',
-    note:'Starts on a pickup — three notes before the first full bar. Count "2, 3, 4" and come in.',
+    note:'Starts on a pickup: three notes before the first full bar. Count "2, 3, 4" and come in.',
     pickup:3,
     rh:[[60,1,1],[64,1,3],[65,1,4], [67,3,5],[60,1,1], [64,1,3],[65,1,4],[67,2,5],
         [67,1,5],[64,1,3],[60,1,1],[64,1,3], [62,4,2],
@@ -719,7 +762,7 @@ const SONGS = [
   {
     id:'amazing-grace', title:'Amazing Grace', composer:'Traditional',
     level:2, keySig:'C', ts:[3,4], bpm:76, hands:'grand',
-    note:'Waltz time — three beats to a bar. The pickup note is a single G before bar one.',
+    note:'Waltz time: three beats to a bar. The pickup note is a single G before bar one.',
     pickup:1,
     rh:[[67,1,1], [72,1.5,1],[76,.5,3],[72,1,1], [76,2,3],[74,1,2], [72,2,1],[69,1,3], [67,2,1],[67,1,1],
         [72,1.5,1],[76,.5,3],[72,1,1], [76,2,3],[74,1,2], [72,3,1], [72,3,1]],
@@ -750,7 +793,7 @@ const SONGS = [
   {
     id:'auld-lang-syne', title:'Auld Lang Syne', composer:'Traditional',
     level:2, keySig:'C', ts:[4,4], bpm:76, hands:'rh',
-    note:'Full of dotted-eighth pairs — the "Scotch snap" that gives it its lilt.',
+    note:'Full of dotted-eighth pairs: the "Scotch snap" that gives it its lilt.',
     pickup:1,
     rh:[[67,1,1], [72,1.5,1],[72,.5,1],[72,1,1],[76,1,3], [74,1.5,2],[72,.5,1],[74,1,2],[76,1,3],
         [72,1.5,1],[72,.5,1],[76,1,3],[79,1,5], [81,3,5],[81,1,5],
@@ -790,7 +833,7 @@ const SONGS = [
   {
     id:'prelude-c', title:'Prelude in C', composer:'J.S. Bach · BWV 846',
     level:3, keySig:'C', ts:[4,4], bpm:66, hands:'grand',
-    note:'Pure figuration — the same shape over changing harmony. The finest finger exercise ever written.',
+    note:'Pure figuration: the same shape over changing harmony. The finest finger exercise ever written.',
     rh:[[55,.25,1],[60,.25,2],[64,.25,3],[55,.25,1],[60,.25,2],[64,.25,3],[55,.25,1],[60,.25,2],[64,.25,3],[55,.25,1],[60,.25,2],[64,.25,3],[55,.25,1],[60,.25,2],[64,.25,3],[55,.25,1],
         [57,.25,1],[62,.25,2],[65,.25,3],[57,.25,1],[62,.25,2],[65,.25,3],[57,.25,1],[62,.25,2],[65,.25,3],[57,.25,1],[62,.25,2],[65,.25,3],[57,.25,1],[62,.25,2],[65,.25,3],[57,.25,1],
         [55,.25,1],[62,.25,2],[65,.25,3],[55,.25,1],[62,.25,2],[65,.25,3],[55,.25,1],[62,.25,2],[65,.25,3],[55,.25,1],[62,.25,2],[65,.25,3],[55,.25,1],[62,.25,2],[65,.25,3],[55,.25,1],
@@ -800,7 +843,7 @@ const SONGS = [
   {
     id:'canon-d', title:'Canon in D', composer:'Pachelbel · melody',
     level:3, keySig:'D', ts:[4,4], bpm:72, hands:'grand',
-    note:'Two sharps in the key signature — every F and every C is raised. The famous descending bass sits underneath.',
+    note:'Two sharps in the key signature: every F and every C is raised. The famous descending bass sits underneath.',
     rh:[[78,2,5],[76,2,4], [74,2,3],[73,2,2], [71,2,1],[69,2,3], [71,2,1],[73,2,2],
         [78,2,5],[76,2,4], [74,2,3],[73,2,2], [71,2,1],[69,2,3], [71,2,1],[73,2,2]],
     lh:[[[38,45],2,[5,1]],[[45,52],2,[5,1]], [[47,54],2,[5,1]],[[42,49],2,[5,1]],
@@ -823,7 +866,7 @@ const SONGS = [
   {
     id:'minuet-g', title:'Minuet in G', composer:'Petzold · opening',
     level:3, keySig:'G', ts:[3,4], bpm:104, hands:'grand',
-    note:'One sharp — every F is F♯. A courtly dance, so keep it crisp rather than romantic.',
+    note:'One sharp: every F is F♯. A courtly dance, so keep it crisp rather than romantic.',
     rh:[[74,1,5],[67,.5,1],[69,.5,2],[71,.5,3],[72,.5,4], [74,1,5],[67,1,1],[67,1,1],
         [76,1,3],[72,.5,1],[74,.5,2],[76,.5,3],[78,.5,4], [79,1,5],[67,1,1],[67,1,1],
         [72,1,4],[74,.5,5],[72,.5,4],[71,.5,3],[69,.5,2], [71,1,3],[72,.5,4],[71,.5,3],[69,.5,2],[67,.5,1],
@@ -838,7 +881,7 @@ const SONGS = [
   {
     id:'frere-jacques', title:'Frère Jacques', composer:'Traditional · French',
     level:1, keySig:'C', ts:[4,4], bpm:100, hands:'rh',
-    note:'A round in four parts — once it feels secure, try singing it while a friend claps the beat.',
+    note:'A round in four parts. Once it feels secure, try singing it while a friend claps the beat.',
     rh:[[60,1,1],[62,1,2],[64,1,3],[60,1,1], [60,1,1],[62,1,2],[64,1,3],[60,1,1],
         [64,1,3],[65,1,4],[67,2,5], [64,1,3],[65,1,4],[67,2,5],
         [67,.5,5],[69,.5,5],[67,.5,5],[65,.5,4],[64,1,3],[60,1,1], [67,.5,5],[69,.5,5],[67,.5,5],[65,.5,4],[64,1,3],[60,1,1],
@@ -847,7 +890,7 @@ const SONGS = [
   {
     id:'london-bridge', title:'London Bridge Is Falling Down', composer:'Traditional · English',
     level:1, keySig:'C', ts:[4,4], bpm:104, hands:'rh',
-    note:'A small extension above the five-finger box — the thumb steps up to A, then the hand settles back.',
+    note:'A small extension above the five-finger box: the thumb steps up to A, then the hand settles back.',
     rh:[[67,1,5],[69,1,5],[67,1,5],[65,1,4], [64,1,3],[65,1,4],[67,2,5],
         [62,1,2],[64,1,3],[65,2,4], [64,1,3],[65,1,4],[67,2,5],
         [67,1,5],[69,1,5],[67,1,5],[65,1,4], [64,1,3],[65,1,4],[67,2,5],
@@ -856,7 +899,7 @@ const SONGS = [
   {
     id:'row-boat', title:'Row, Row, Row Your Boat', composer:'Traditional',
     level:1, keySig:'C', ts:[4,4], bpm:96, hands:'rh',
-    note:'A round for one hand first. The "merrily" bars send the thumb up an octave and back — a first taste of a real jump.',
+    note:'A round for one hand first. The "merrily" bars send the thumb up an octave and back: a first taste of a real jump.',
     rh:[[60,1,1],[60,1,1],[60,.5,1],[62,.5,2],[64,1,3],
         [64,1,3],[62,.5,2],[64,.5,3],[65,.5,4],[67,1.5,5],
         [72,.5,5],[72,.5,5],[72,1,5],[67,.5,5],[67,.5,5],[67,1,5],
@@ -866,7 +909,7 @@ const SONGS = [
   {
     id:'three-blind-mice', title:'Three Blind Mice', composer:'Traditional · English',
     level:2, keySig:'D', ts:[4,4], bpm:112, hands:'rh',
-    note:'D major — two sharps, F♯ and C♯. The second half shifts the hand up to sit under A before settling back down.',
+    note:'D major: two sharps, F♯ and C♯. The second half shifts the hand up to sit under A before settling back down.',
     rh:[[66,1,3],[64,1,2],[62,2,1], [66,1,3],[64,1,2],[62,2,1],
         [69,1,5],[67,1,4],[67,1,4],[66,1,3], [69,1,5],[67,1,4],[67,1,4],[66,1,3],
         [69,.5,1],[74,.5,4],[74,1,4],[73,1,3],[71,1,2],
@@ -877,7 +920,7 @@ const SONGS = [
   {
     id:'old-macdonald', title:'Old MacDonald Had a Farm', composer:'Traditional',
     level:2, keySig:'C', ts:[4,4], bpm:104, hands:'grand',
-    note:'A pentatonic tune — no F or B anywhere, so the left hand can hold one chord the whole way through.',
+    note:'A pentatonic tune: no F or B anywhere, so the left hand can hold one chord the whole way through.',
     rh:[[67,1,4],[67,1,4],[67,1,4],[62,1,1], [64,1,2],[64,1,2],[62,2,1],
         [71,.5,5],[71,.5,5],[69,.5,5],[69,.5,5],[67,2,4],
         [62,1,1],[67,1,4],[67,1,4],[67,1,4], [62,1,1],[64,1,2],[64,1,2],[62,1,1],
@@ -897,7 +940,7 @@ const SONGS = [
   {
     id:'itsy-bitsy-spider', title:'Itsy-Bitsy Spider', composer:'Traditional',
     level:2, keySig:'C', ts:[4,4], bpm:100, hands:'rh',
-    note:'The hand lives in one five-finger box, an octave above middle C — only the opening reach down to G breaks it.',
+    note:'The hand lives in one five-finger box, an octave above middle C. Only the opening reach down to G breaks it.',
     rh:[[67,.5,1],[72,.5,1],[72,.5,1],[72,.5,1],[74,.5,2],[76,.5,3],[76,1,3],
         [76,.5,3],[74,.5,2],[72,.5,1],[74,.5,2],[76,.5,3],[72,1.5,1],
         [76,1,3],[76,1,3],[77,1,4],[79,1,5],
@@ -910,7 +953,7 @@ const SONGS = [
   {
     id:'oh-susanna', title:'Oh! Susanna', composer:'Stephen Foster',
     level:2, keySig:'G', ts:[4,4], bpm:116, hands:'rh',
-    note:'Stephen Foster, 1848. A brisk banjo-tune bounce — keep the eighth notes light and even.',
+    note:'Stephen Foster, 1848. A brisk banjo-tune bounce: keep the eighth notes light and even.',
     rh:[[67,.5,1],[69,.5,2],[71,.5,3],[74,.5,5],[74,.5,5],[76,.5,5],[74,.5,5],[71,.5,3],
         [67,.5,1],[69,.5,2],[71,.5,3],[71,.5,3],[69,.5,2],[67,.5,1],[69,1,2],
         [67,.5,1],[69,.5,2],[71,.5,3],[74,.5,5],[74,.5,5],[76,.5,5],[74,.5,5],[71,.5,3],
@@ -923,7 +966,7 @@ const SONGS = [
   {
     id:'deck-the-halls', title:'Deck the Halls', composer:'Traditional · Welsh',
     level:3, keySig:'G', ts:[4,4], bpm:120, hands:'grand',
-    note:"The F♯ that slides down to G right before the last chord is the whole character of the tune — don't rush past it.",
+    note:"The F♯ that slides down to G right before the last chord is the whole character of the tune: don't rush past it.",
     rh:[[74,.5,5],[72,.5,4],[71,.5,3],[69,.5,2],[67,.5,1],[69,.5,2],[71,.5,3],[67,.5,1],
         [69,1,2],[71,1,3],[72,1,4],[69,1,2],
         [71,1,3],[69,1,2],[67,.5,1],[66,.5,1],[67,1,1],
@@ -936,7 +979,7 @@ const SONGS = [
   {
     id:'angels-high', title:'Angels We Have Heard on High', composer:'Traditional · French carol',
     level:3, keySig:'F', ts:[4,4], bpm:100, hands:'rh',
-    note:'The famous "Glo—ria" run is one long flowing line — practice it slowly enough that every note stays even, then speed up.',
+    note:'The famous "Glo-ria" run is one long flowing line: practice it slowly enough that every note stays even, then speed up.',
     rh:[[69,.5,3],[69,.5,3],[69,.5,3],[72,.5,5],[72,.5,5],[70,.5,4],[69,1,3],
         [69,.5,3],[67,.5,2],[69,.5,3],[72,.5,5],[69,.5,3],[67,.5,2],[65,1,1],
         [69,.5,3],[69,.5,3],[69,.5,3],[72,.5,5],[72,.5,5],[70,.5,4],[69,1,3],
@@ -1017,7 +1060,7 @@ const TECHNIQUE = [
     note:'One sharp: F♯. Same fingering as C, one black key.',
     notes:withFingers(scaleUpDown(67, MAJ), MAJOR_SCALE_FINGERS) },
   { id:'t-scale-f', keySig:'F', title:'F major scale · one octave', level:2,
-    note:'One flat: B♭. The thumb tuck lands in a different place — take it slowly.',
+    note:'One flat: B♭. The thumb tuck lands in a different place: take it slowly.',
     notes:withFingers(scaleUpDown(65, MAJ), F_SCALE_FINGERS) },
   { id:'t-scale-d', keySig:'D', title:'D major scale · one octave', level:3,
     note:'Two sharps: F♯ and C♯.',
@@ -1092,7 +1135,7 @@ function spell(midi, keySig){
   return {letter, alter, oct, di, name:nm};
 }
 function noteName(midi, keySig){
-  if(midi==null) return '—';
+  if(midi==null) return '–';
   const s = spell(midi, keySig||'C');
   return s.name + s.oct;
 }
@@ -1141,7 +1184,7 @@ function clefFor(midi, staff, hand){
   if(staff!=='grand') return staff;
   // A hand normally stays on its own staff, but a note far outside that
   // staff's range would need an unreadable stack of ledger lines, so it
-  // crosses — which is what an engraver does too.
+  // crosses: which is what an engraver does too.
   if(hand==='lh') return midi>65 ? 'treble' : 'bass';
   if(hand==='rh') return midi<55 ? 'bass' : 'treble';
   return midi<60 ? 'bass' : 'treble';
@@ -1333,7 +1376,7 @@ function renderScore(L, showNoteNames){
 
   /* notes */
   const acc = keyAlterations(L.keySig);
-  const fingerTops=[];     // {x, y} — so a chord label can sit clear of them
+  const fingerTops=[];     // {x, y}: so a chord label can sit clear of them
 
   const drawStream=(stream, hand)=>{
     /* ---------- pass 1: work out every note's pitches, accidentals
@@ -1358,7 +1401,7 @@ function renderScore(L, showNoteNames){
           const sp = spell(p.m, L.keySig);
           const y = diToY(sp.di, clef, grand);
           /* An accidental is needed when the note's alteration differs from
-             the letter's CURRENT state in this bar — the bar's own accidental
+             the letter's CURRENT state in this bar: the bar's own accidental
              if one has been set, otherwise the key signature.  That is what
              makes a natural appear after an earlier sharp or flat. */
           const tag = sp.letter+sp.oct;
@@ -1499,7 +1542,7 @@ function renderScore(L, showNoteNames){
           }
         }
       }
-      /* fingering — an annotation, kept clear of everything else */
+      /* fingering: an annotation, kept clear of everything else */
       if(it.pitches.some(p=>p.f!=null)){
         const clef=it.clef;
         const above = !(clef==='bass' || hand==='lh');
@@ -1607,7 +1650,7 @@ function renderScore(L, showNoteNames){
     .keysig{fill:var(--ink);font-family:var(--font-body);font-size:16px;font-weight:600}
     .timesig{fill:var(--ink);font-family:var(--font-body);font-size:20px;font-weight:800;text-anchor:middle;dominant-baseline:central}
     .clef-g{fill:var(--ink);font-family:var(--font-display);font-size:23px;font-weight:700}
-    .clef-lbl{fill:var(--ink-3);font-family:var(--font-body);font-size:6px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+    .clef-lbl{fill:var(--ink-2);font-family:var(--font-display);font-style:italic;font-size:8px;font-weight:500}
     .cursor{fill:var(--brass-wash);stroke:var(--brass);stroke-width:1;transition:x .18s cubic-bezier(.4,0,.2,1),opacity .18s}
     .chordlab{fill:var(--brass);font-family:var(--font-display);font-size:15px;font-weight:700;text-anchor:middle}
   </style>`;
@@ -1619,7 +1662,7 @@ function round4(x){ return Math.round(x*10000)/10000; }
 function escapeAttr(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 /* ==============================================================
-   AUDIO — a small struck-string synth + metronome
+   AUDIO: a small struck-string synth + metronome
    ============================================================== */
 const Audio_ = {
   ctx:null, master:null, _live:[],
@@ -1641,7 +1684,7 @@ const Audio_ = {
   resume(){ if(this.ctx && this.ctx.state==='suspended') this.ctx.resume(); },
   ready(){ return !!this.ctx && this.ctx.state==='running'; },
   /* iOS starts every AudioContext suspended and will not start one outside a
-     real gesture — and it stays silent until something has actually played.
+     real gesture: and it stays silent until something has actually played.
      Run this from the first touch/click/keypress and the rest of the app works. */
   unlock(){
     const ctx=this.init();
@@ -1656,7 +1699,7 @@ const Audio_ = {
     this._mediaSession();
   },
 
-  /* On iOS, Web Audio alone plays on the RINGER channel — so the hardware
+  /* On iOS, Web Audio alone plays on the RINGER channel: so the hardware
      mute switch silences it however loud the volume is. Playing a real (silent)
      media element moves the page to the media audio session, after which
      Web Audio ignores the mute switch. This is the fix for "no sound on iPad". */
@@ -1730,7 +1773,7 @@ const Audio_ = {
 };
 
 /* ==============================================================
-   INPUT — MIDI, microphone, on-screen keys
+   INPUT: MIDI, microphone, on-screen keys
    ============================================================== */
 const Input = {
   mode:'none',
@@ -1738,7 +1781,7 @@ const Input = {
   onOn:null, onOff:null, onPitch:null,
   midiAccess:null,
   _mic:null, _raf:null, _lastMidi:null, _stable:0, _silent:0, _rmsHist:[],
-  suppressMono:false,   // set while the target is a chord — see chordPresence
+  suppressMono:false,   // set while the target is a chord: see chordPresence
   minExpected:21,       // ignore anything implausibly below the lesson's range
 
   hasMIDI(){ return !!navigator.requestMIDIAccess; },
@@ -1810,7 +1853,7 @@ const Input = {
   },
 
   /* pause/resume: fully release the microphone track (so the OS's "recording"
-     indicator actually goes away) rather than just ignoring its data —
+     indicator actually goes away) rather than just ignoring its data –
      permission is already granted, so re-acquiring it on resume is instant. */
   paused:false,
   pauseMic(){
@@ -1862,7 +1905,7 @@ const Input = {
     }
     this._silent=0;
 
-    // decimate by 2 with a 2-tap average — plenty of bandwidth for piano
+    // decimate by 2 with a 2-tap average: plenty of bandwidth for piano
     for(let i=0;i<1024;i++) ds[i]=(buf[2*i]+buf[2*i+1])*.5;
     const sr = this._mic.ctx.sampleRate/2;
     const f0 = mpm(ds, sr, 62, 1600);
@@ -1873,13 +1916,13 @@ const Input = {
     const cents = Math.round((mf-m)*100);
     if(this.onPitch) this.onPitch(m, cents, rms);
     if(m<21||m>108) return;
-    // A chord makes a monophonic detector report the common difference period —
+    // A chord makes a monophonic detector report the common difference period –
     // C4+E4+G4 reads as C2. Don't let that count as a played note.
     if(this.suppressMono) return;
     if(m < this.minExpected) return;
 
     if(m===this._lastMidi){
-      // same pitch — a fresh attack shows up as a sharp jump in level
+      // same pitch: a fresh attack shows up as a sharp jump in level
       // (was: needed a jump of 2.1x AND an absolute level of 0.02, which a
       // quiet iPad mic never reaches, so repeated notes were missed)
       if(rms > avgRms*1.7 && rms>0.009 && now-(this._lastAttack||0)>140){ this._lastAttack=now; this._off(m); this._on(m,.8); }
@@ -1898,7 +1941,7 @@ const Input = {
   },
 
   /* Which of a set of candidate pitches are currently sounding?
-     Spectral, and only ever approximate — used for chord checking. */
+     Spectral, and only ever approximate: used for chord checking. */
   chordPresence(candidates){
     if(!this._mic || !this._cp) return null;
     // a note counts if it showed in at least 2 of the last ~10 scans, so a
@@ -1953,7 +1996,7 @@ function chordScoreMags(mags, binHz, cands){
   return out;
 }
 
-/* McLeod pitch method — normalised square difference + peak picking */
+/* McLeod pitch method: normalised square difference + peak picking */
 function mpm(x, sr, minF, maxF){
   const n=x.length;
   const tauMin=Math.max(2,Math.floor(sr/maxF));
@@ -1969,7 +2012,7 @@ function mpm(x, sr, minF, maxF){
   const peaks=[]; let searching=false, curMax=-1, curIdx=-1;
   // Start at tauMin+1 deliberately: opening a run at tauMin itself lets a
   // spurious short-lag peak win and misreads low notes badly (C2 read as G6).
-  // The cost is that notes above ~G6 read an octave low — outside the range
+  // The cost is that notes above ~G6 read an octave low: outside the range
   // any lesson here uses.
   for(let tau=tauMin+1;tau<=tauMax;tau++){
     if(!searching){ if(nsdf[tau]>0 && nsdf[tau]>nsdf[tau-1]){ searching=true; curMax=nsdf[tau]; curIdx=tau; } }
@@ -1994,7 +2037,7 @@ function mpm(x, sr, minF, maxF){
 }
 
 /* ==============================================================
-   STORAGE — the db capability when the viewer grants it,
+   STORAGE: the db capability when the viewer grants it,
    localStorage otherwise. Never load-bearing.
    ============================================================== */
 const Store = {
@@ -2047,7 +2090,7 @@ const Store = {
    ============================================================== */
 function streamFrom(list, start){
   let t = start||0; const out=[];
-  // [midi, beats, finger?] — finger is 1-5, or an array matching a chord's
+  // [midi, beats, finger?]: finger is 1-5, or an array matching a chord's
   // notes in order, or absent.
   for(const [n,d,f] of list){
     out.push({t:round4(t), midi:n, dur:d, finger:(f===undefined?null:f)});
@@ -2177,6 +2220,7 @@ const Session = {
   start(){
     if(!this.L) return;
     Audio_.init(); Audio_.resume();
+    try{ if(navigator.wakeLock && !this._wake) navigator.wakeLock.request('screen').then(w=>{ this._wake=w; w.addEventListener('release',()=>{ this._wake=null; }); }).catch(()=>{}); }catch(e){}
     this.running=true; this.idx=0; this.hits=0; this.misses=0; this.streak=0;
     this.bestStreak=0; this.nextBeat=0;
     this.satisfied=new Set();
@@ -2188,7 +2232,7 @@ const Session = {
       for(let b=0;b<cnt;b++) Audio_.click(this.clockStart - spb*(cnt-b), b===0);
       this.windowOpen=false; this.windowHits=new Set();
       this._tick();
-      UI.msg(`Count-in — ${cnt} clicks, then come in.`);
+      UI.msg(`Count-in: ${cnt} clicks, then come in.`);
     } else {
       UI.msg('Play the highlighted note.');
     }
@@ -2196,6 +2240,7 @@ const Session = {
   },
   stop(){
     this.running=false;
+    if(this._wake){ this._wake.release().catch(()=>{}); this._wake=null; }
     if(this.raf) cancelAnimationFrame(this.raf);
     this.raf=null;
     UI.setStartLabel();
@@ -2322,13 +2367,15 @@ const UI = {
     };
     // theme
     const savedTheme = (()=>{try{return localStorage.getItem('middlec-theme')}catch(e){return null}})();
-    if(savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+    const paintBar = t=>{ if(!t) return; document.querySelectorAll('meta[name=theme-color]').forEach(m=>m.content = t==='dark' ? '#1D1712' : '#FFFFFF'); };
+    if(savedTheme){ document.documentElement.setAttribute('data-theme', savedTheme); paintBar(savedTheme); }
     this.$('themeBtn').onclick = ()=>{
       const cur = document.documentElement.getAttribute('data-theme');
       const sysDark = matchMedia('(prefers-color-scheme: dark)').matches;
       const next = cur ? (cur==='dark'?'light':'dark') : (sysDark?'light':'dark');
       document.documentElement.setAttribute('data-theme', next);
       try{localStorage.setItem('middlec-theme', next)}catch(e){}
+      paintBar(next);
     };
     // tabs
     document.querySelectorAll('.rail-tabs button').forEach(b=>{
@@ -2346,7 +2393,7 @@ const UI = {
         document.querySelectorAll('#modeSeg button').forEach(x=>x.setAttribute('aria-pressed', x===b));
         Session.stop(); Session.mode=b.dataset.mode;
         this.msg(Session.mode==='learn'
-          ? 'Learn mode waits for you — take as long as you like on each note.'
+          ? 'Learn mode waits for you: take as long as you like on each note.'
           : 'Play-along runs to the metronome. One bar of clicks first.');
       };
     });
@@ -2376,11 +2423,10 @@ const UI = {
       if(Input.mode==='mic') this.toggleMicPause();
       else this.openSetup();
     };
-    this.$('inputSettingsBtn').onclick = ()=>this.openSetup();
     this.$('setupDone').onclick = ()=>this.closeSetup();
     this.$('soundTest').onclick = ()=>{
       Audio_.unlock();
-      // a small rising figure — unmistakable if it comes through
+      // a small rising figure: unmistakable if it comes through
       const t0 = Audio_.ctx.currentTime + .05;
       [60,64,67,72].forEach((m,i)=>Audio_.note(m, t0+i*0.18, 0.5, .7));
       setTimeout(()=>this.paintSoundState(), 120);
@@ -2403,7 +2449,7 @@ const UI = {
     const wake = ()=>{
       Audio_.unlock(); this.paintSoundState();
       // If a real gesture still cannot start audio, this page is boxed in by
-      // whatever is embedding it — no code of ours can grant that permission,
+      // whatever is embedding it: no code of ours can grant that permission,
       // so offer the one thing that does work: opening it top-level.
       setTimeout(()=>{ if(!Audio_.ready()) this.showEscape('audio'); }, 400);
     };
@@ -2463,7 +2509,7 @@ const UI = {
     const opts=[
       {k:'midi', t:'Keyboard plugged in over USB', d:'Exact and instant. Best if your digital piano has a USB or MIDI port.',
        icon:'<rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 7v7M12 7v7M16 7v7"/>'},
-      {k:'mic', t:'Listen through the microphone', d:'For an acoustic piano or a keyboard with no USB port. Single notes are reliable; chords are approximate.',
+      {k:'mic', t:'Listen through the microphone', d:'For an acoustic piano or a keyboard with no USB port. Hears single notes and chords. Best in a quiet room.',
        icon:'<rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'},
       {k:'tap', t:'Tap the on-screen keys', d:'No instrument needed. Good for learning to read the notes.',
        icon:'<path d="M4 4h16v11H4z"/><path d="M9 4v11M15 4v11M12 19v2"/>'}
@@ -2473,7 +2519,7 @@ const UI = {
       b.className='opt'+(o.k==='midi'&&!Input.hasMIDI()?' disabled':'');
       b.setAttribute('aria-pressed', String(Input.mode===o.k));
       b.innerHTML=`<span class="oi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${o.icon}</svg></span>
-        <span><span class="ot">${o.t}</span><span class="od">${o.k==='midi'&&!Input.hasMIDI()?'This browser doesn\'t support USB&nbsp;MIDI — try Chrome or Edge.':o.d}</span></span>`;
+        <span><span class="ot">${o.t}</span><span class="od">${o.k==='midi'&&!Input.hasMIDI()?'This browser doesn\'t support USB&nbsp;MIDI: try Chrome or Edge.':o.d}</span></span>`;
       b.onclick = async ()=>{
         document.querySelectorAll('#setupOpts .opt').forEach(x=>x.setAttribute('aria-pressed','false'));
         b.setAttribute('aria-pressed','true');
@@ -2509,8 +2555,8 @@ const UI = {
       msg = 'This browser is not offering microphone access to the page at all.';
     } else if(e.name==='NotAllowedError' && c.framed){
       msg = c.ios
-        ? 'Blocked. On iPad this is usually the page being embedded — open the artifact link directly in Safari instead of inside the app.'
-        : 'Blocked — either you declined the prompt, or the page embedding this one is not passing microphone access through. Try opening the link in its own browser tab.';
+        ? 'Blocked. On iPad this is usually the page being embedded. Open this page directly in Safari instead of inside another app.'
+        : 'Blocked: either you declined the prompt, or the page embedding this one is not passing microphone access through. Try opening the link in its own browser tab.';
     } else if(e.name==='NotAllowedError'){
       msg = 'Permission was declined. Allow the microphone for this site and tap Listen again.';
     } else if(e.name==='NotFoundError'){
@@ -2550,18 +2596,18 @@ const UI = {
     const el=this.$('soundState'); if(!el) return;
     const st = Audio_.ctx ? Audio_.ctx.state : 'none';
     if(st==='running'){ el.textContent='Sound is on'; el.classList.add('on'); }
-    else if(st==='suspended'){ el.textContent='Sound asleep — tap Test sound'; el.classList.remove('on'); }
+    else if(st==='suspended'){ el.textContent='Sound asleep: tap Test sound'; el.classList.remove('on'); }
     else { el.textContent='Sound not started yet'; el.classList.remove('on'); }
   },
 
   paintHeard(m, cents, rms){
     const setTxt=(id,v)=>{const e=this.$(id); if(e) e.textContent=v;};
-    setTxt('hudHeard', m==null?'—':noteName(m, this.current?this.current.keySig:'C'));
+    setTxt('hudHeard', m==null?'–':noteName(m, this.current?this.current.keySig:'C'));
     const c=this.$('hudCents');
     if(c) c.style.left = (50 + Math.max(-50,Math.min(50,(cents||0)))*0.9) + '%';
     if(!this.$('setupScrim').hidden){
-      setTxt('tunerNote', m==null?'—':noteName(m,'C'));
-      setTxt('tunerHz', m==null?'— Hz':(Math.round(midiToFreq(m)*Math.pow(2,cents/1200)*10)/10)+' Hz');
+      setTxt('tunerNote', m==null?'–':noteName(m,'C'));
+      setTxt('tunerHz', m==null?'– Hz':(Math.round(midiToFreq(m)*Math.pow(2,cents/1200)*10)/10)+' Hz');
       const l=this.$('tunerLvl'); if(l) l.style.width=Math.min(100, (rms||0)*900)+'%';
     }
   },
@@ -2625,7 +2671,7 @@ const UI = {
     this.xmap = r.xmap; this.svgW = r.W;
     const sc = this.$('scoreScroll');
     sc.innerHTML = r.svg;
-    // the score is the thing you actually read — scale it up to fill the height
+    // the score is the thing you actually read: scale it up to fill the height
     const svg = sc.querySelector('svg');
     const natH = +svg.getAttribute('height'), natW = +svg.getAttribute('width');
     const avail = Math.max(120, sc.clientHeight - 28);
@@ -2706,9 +2752,9 @@ const UI = {
     const ev = L && L.events[S.idx];
     this.$('hudTarget').textContent = ev
       ? ev.notes.map(m=>noteName(m,L.keySig)).join(' ')
-      : (L && S.idx>=L.events.length ? 'Done' : '—');
+      : (L && S.idx>=L.events.length ? 'Done' : '–');
     const tot=S.hits+S.misses;
-    this.$('hudAcc').textContent = tot ? Math.round(S.hits/tot*100)+'%' : '—';
+    this.$('hudAcc').textContent = tot ? Math.round(S.hits/tot*100)+'%' : '–';
     this.$('hudStreak').textContent = S.streak;
     const pct = L && L.events.length ? (S.idx/L.events.length)*100 : 0;
     this.$('hudBar').style.width = Math.min(100,pct)+'%';
@@ -2746,12 +2792,12 @@ const UI = {
     const roundPct = Math.round(pct);
     const passed = stars>=2;
 
-    this.$('finishStars').textContent = '●'.repeat(stars)+'○'.repeat(3-stars);
+    this.$('finishStars').innerHTML = [0,1,2].map(i=>`<svg viewBox="0 0 24 24" class="${i<stars?'on':''}"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.5 1.2 6.4L12 17.3l-5.7 3.1 1.2-6.4-4.7-4.5 6.4-.8z"/></svg>`).join('');
     this.$('finishTitle').textContent = stars===3?'That one\'s yours now' : stars===2?'Almost there' :
       stars===1?'Getting there' : 'Keep at it';
     this.$('finishStats').textContent = `${roundPct}% accurate  ·  longest run ${streak}`;
     this.$('finishNote').textContent = stars===3?'Clean run at this tempo. Ready to move on.' :
-      stars===2?'Solid — one more pass here would lock it in, or push on if you\'d rather.' :
+      stars===2?'Solid: one more pass here would lock it in, or push on if you\'d rather.' :
       stars===1?'Getting there. Try it a bit slower before you move on.' :
       'Slow the tempo down and run it again before moving on.';
 
