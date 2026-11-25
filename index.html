@@ -517,6 +517,7 @@ button,.wk,.bk,.kbd,.hud,.rail-tabs,.lesson-item{-webkit-user-select:none;user-s
 .add-song svg{width:18px;height:18px;flex:0 0 auto}
 .add-song .li-title{color:var(--ink);font-weight:500;display:block}
 .add-song .li-meta{font-size:var(--step--1);color:var(--ink-3);display:block;margin-top:1px}
+.rail-link{display:block;width:100%;text-align:left;padding:4px 12px 10px;font-size:var(--step--1);color:var(--brass);font-weight:500}
 .byline-act{font-size:var(--step--1);color:var(--felt);font-weight:600;text-decoration:underline;text-underline-offset:3px;margin-left:2px}
 @media (prefers-reduced-motion: reduce){ .ctl:active,.pill:active,.icon-btn:active,.opt:active{transform:none} }
 </style>
@@ -1860,7 +1861,7 @@ const Input = {
     }
   },
   stopMic(){
-    if(this._raf) cancelAnimationFrame(this._raf);
+    if(this._raf) clearTimeout(this._raf);
     this._raf=null;
     if(this._mic){ this._mic.stream.getTracks().forEach(t=>t.stop()); this._mic=null; }
     if(this._lastMidi!=null){ this._off(this._lastMidi); this._lastMidi=null; }
@@ -1874,7 +1875,7 @@ const Input = {
   pauseMic(){
     if(!this._mic || this.paused) return;
     this.paused=true;
-    if(this._raf) cancelAnimationFrame(this._raf);
+    if(this._raf) clearTimeout(this._raf);
     this._raf=null;
     this._mic.stream.getTracks().forEach(t=>t.stop());
     this._mic=null;
@@ -1891,7 +1892,7 @@ const Input = {
 
   _loop(){
     if(!this._mic) return;
-    this._raf = requestAnimationFrame(()=>this._loop());
+    this._raf = setTimeout(()=>this._loop(), 16);   // own clock: listening must not depend on screen refresh
     const now = performance.now();
     if(this._lastRun && now-this._lastRun < 32) return;
     this._lastRun = now;
@@ -1918,7 +1919,7 @@ const Input = {
 
     if(rms < gate){
       this._silent++;
-      if(this._silent>3 && this._lastMidi!=null){ this._off(this._lastMidi); this._lastMidi=null; this._stable=0; }
+      if(this._silent>3 && this.held.size){ for(const h of [...this.held]) this._off(h); this._lastMidi=null; this._stable=0; }
       if(this.onPitch) this.onPitch(null, 0, rms);
       return;
     }
@@ -1985,6 +1986,8 @@ const Input = {
       this._tLast.set(m,now);
       if(this.held.has(m)) this._off(m);
       this._on(m,.8);
+      const rel=this._rel||(this._rel=new Map());
+      clearTimeout(rel.get(m)); rel.set(m, setTimeout(()=>{ if(m!==this._lastMidi) this._off(m); }, 400));
     }
   },
 
@@ -2397,6 +2400,12 @@ const Session = {
         UI.markNow(this.idx); UI.moveCursor(this.idx);
       }
     } else {
+      // through the mic, a note you just played can still be ringing and get
+      // heard again (often an octave off): that is not a mistake
+      if(Input.mode==='mic'){
+        const recent=[this.L.events[this.idx-1], this.L.events[this.idx-2]].filter(Boolean);
+        if(recent.some(e=>e.notes.some(n=>(m-n)%12===0))) return;
+      }
       this.misses++; this.streak=0;
       UI.flashWrong(m);
     }
@@ -2454,6 +2463,7 @@ const MySongs = {
     SONGS.push(song); return true;
   },
   remove(id){
+    try{ const g=JSON.parse(localStorage.getItem('middlec-removed')||'[]'); if(!g.includes(id)){ g.push(id); localStorage.setItem('middlec-removed', JSON.stringify(g)); } }catch(e){}
     this.save(this.load().filter(s=>s.id!==id));
     const i=SONGS.findIndex(s=>s.id===id); if(i>=0) SONGS.splice(i,1);
   }
@@ -2676,6 +2686,38 @@ function songFromNotes(p){
   return song;
 }
 
+/* PRIVATE SONGS: Russell's own song files, locked with his code, live in
+   private/ on the site. Locked, they are useless to anyone else. The code
+   arrives once (a #key= link, or typed in), stays on this device, and every
+   song in private/index.json is unlocked and added to My songs. */
+const PrivateSongs = {
+  KEY:'middlec-key',
+  code(){ try{ return localStorage.getItem(this.KEY)||''; }catch(e){ return ''; } },
+  setCode(c){ try{ localStorage.setItem(this.KEY, String(c).toLowerCase().replace(/[^a-z0-9]/g,'')); }catch(e){} },
+  async unlock(buf, code){
+    const u8=new Uint8Array(buf), salt=u8.subarray(0,16), iv=u8.subarray(16,28), ct=u8.subarray(28);
+    const base=await crypto.subtle.importKey('raw', new TextEncoder().encode(code), 'PBKDF2', false, ['deriveKey']);
+    const key=await crypto.subtle.deriveKey({name:'PBKDF2', salt, iterations:150000, hash:'SHA-256'}, base, {name:'AES-GCM', length:256}, false, ['decrypt']);
+    return crypto.subtle.decrypt({name:'AES-GCM', iv}, key, ct);
+  },
+  async sync(){
+    const code=this.code(); if(!code || !window.crypto || !crypto.subtle) return 0;
+    let list; try{ list=await (await fetch('private/index.json',{cache:'no-store'})).json(); }catch(e){ return 0; }
+    const have=new Set(MySongs.load().map(s=>s.id));
+    let gone; try{ gone=new Set(JSON.parse(localStorage.getItem('middlec-removed')||'[]')); }catch(e){ gone=new Set(); }
+    let added=0;
+    for(const it of list){
+      const id='my-'+it.id; if(have.has(id) || gone.has(id)) continue;
+      let plain;
+      try{ plain=await this.unlock(await (await fetch('private/'+it.file,{cache:'no-store'})).arrayBuffer(), code); }
+      catch(e){ try{ localStorage.removeItem(this.KEY); }catch(_){} throw new Error('That song code did not work.'); }
+      const song=await importSongFile(new File([plain], it.name||it.file));
+      song.id=id; if(MySongs.add(song)) added++;
+    }
+    return added;
+  }
+};
+
 const UI = {
   tab:'songs', current:null, bpm:84, noteEls:new Map(), xmap:null, keyEls:new Map(),
   kbRange:[48,84],
@@ -2684,6 +2726,10 @@ const UI = {
   init(){
     this.$ = id=>document.getElementById(id);
     MySongs.install();
+    const km=/[#&]key=([^&]+)/.exec(location.hash);
+    if(km){ PrivateSongs.setCode(decodeURIComponent(km[1])); history.replaceState(null,'',location.pathname+location.search); }
+    setTimeout(()=>this.syncPrivate(), 0);
+    fetch('private/index.json',{method:'HEAD',cache:'no-store'}).then(r=>{ if(r.ok){ this.hasPrivate=true; this.buildRail(); } }).catch(()=>{});
     // file picker for "Add a song" (no accept filter: iPad greys out .mxl/.musicxml otherwise)
     const fi=document.createElement('input'); fi.type='file'; fi.id='songFile'; fi.className='file-picker';
     document.body.appendChild(fi);
@@ -2957,6 +3003,12 @@ const UI = {
     }
   },
 
+  syncPrivate(){
+    PrivateSongs.sync().then(n=>{
+      if(n){ this.buildRail(); this.toast(n===1 ? 'Added 1 of your songs' : 'Added '+n+' of your songs'); }
+    }).catch(e=>{ this.toast(e.message); this.buildRail(); });
+  },
+
   /* ---------- library rail ---------- */
   buildRail(){
     const list=this.$('railList'); list.innerHTML='';
@@ -2966,6 +3018,11 @@ const UI = {
         '<span><span class="li-title">Add a song</span><span class="li-meta">Open a MusicXML or MIDI file</span></span>';
       add.onclick=()=>this.$('songFile').click();
       list.appendChild(add);
+      if(this.hasPrivate && !PrivateSongs.code()){
+        const cb=document.createElement('button'); cb.className='rail-link'; cb.textContent='Have a song code? Enter it';
+        cb.onclick=()=>{ const c=prompt('Your song code'); if(c && c.trim()){ PrivateSongs.setCode(c); this.buildRail(); this.syncPrivate(); } };
+        list.appendChild(cb);
+      }
     }
     const groups={};
     const push=(g,item)=>{ (groups[g]=groups[g]||[]).push(item); };
